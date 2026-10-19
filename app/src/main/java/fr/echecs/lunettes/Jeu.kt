@@ -7,6 +7,20 @@ import android.net.Uri
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import android.graphics.Matrix
+import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.meta.wearable.dat.camera.Camera
@@ -77,6 +91,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var camera: Camera? = null
   private var flux: Stream? = null
   private var sdkPret = false
+
+  // caméra du téléphone
+  private var telephone = false
+  private var fournisseur: ProcessCameraProvider? = null
+  private var capturePhoto: ImageCapture? = null
+  private val execAnalyse = Executors.newSingleThreadExecutor()
   private val fileImages = Dispatchers.Default.limitedParallelism(1)
 
   // détection de mouvement
@@ -482,6 +502,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     if (w <= 0 || h <= 0 || buf.remaining() < w * h) return
     val y = ByteArray(w * h)
     buf.get(y, 0, w * h)
+    surY(y, w, h)
+  }
+
+  /** Reçoit le plan de luminosité d'une image (lunettes ou téléphone) et décide s'il faut analyser. */
+  private fun surY(y: ByteArray, w: Int, h: Int) {
     dernierY = y
     dernierYw = w
     dernierYh = h
@@ -516,13 +541,115 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
   }
 
+  // ---------------- caméra du téléphone ----------------
+  fun demarrerTelephone(owner: LifecycleOwner, vue: PreviewView) {
+    val ctx = getApplication<Application>()
+    val futur = ProcessCameraProvider.getInstance(ctx)
+    futur.addListener(
+        {
+          try {
+            val prov = futur.get()
+            fournisseur = prov
+            val apercu = Preview.Builder().build().also { it.setSurfaceProvider(vue.surfaceProvider) }
+            val analyse =
+                ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+            analyse.setAnalyzer(execAnalyse) { img -> analyserTel(img) }
+            val photo =
+                ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build()
+            capturePhoto = photo
+            prov.unbindAll()
+            prov.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, apercu, analyse, photo)
+            telephone = true
+            precedent = null
+            statut("Caméra du téléphone démarrée. Pose le téléphone face à l'échiquier.")
+            _etat.update { it.copy(flux = "téléphone") }
+          } catch (e: Exception) {
+            Log.e(TAG, "caméra téléphone", e)
+            statut("ERREUR caméra du téléphone : ${e.message}")
+          }
+        },
+        ContextCompat.getMainExecutor(ctx),
+    )
+  }
+
+  fun arreterTelephone() {
+    fournisseur?.unbindAll()
+    telephone = false
+    capturePhoto = null
+    _etat.update { it.copy(flux = "") }
+    statut("Caméra du téléphone arrêtée.")
+  }
+
+  private fun analyserTel(img: ImageProxy) {
+    try {
+      val plan = img.planes[0]
+      val w = img.width
+      val h = img.height
+      val stride = plan.rowStride
+      val buf = plan.buffer
+      val y = ByteArray(w * h)
+      for (r in 0 until h) {
+        buf.position(r * stride)
+        buf.get(y, r * w, w)
+      }
+      surY(y, w, h)
+    } catch (e: Exception) {
+      Log.w(TAG, "analyse tel", e)
+    } finally {
+      img.close()
+    }
+  }
+
+  /** Photo nette avec la caméra du téléphone, remise à l'endroit. */
+  private suspend fun photoTelephone(): Bitmap? {
+    val cap = capturePhoto ?: return null
+    val brut: Pair<ByteArray, Int>? =
+        suspendCancellableCoroutine { c ->
+          cap.takePicture(
+              ContextCompat.getMainExecutor(getApplication<Application>()),
+              object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                  try {
+                    val b = image.planes[0].buffer
+                    val octets = ByteArray(b.remaining())
+                    b.get(octets)
+                    val rot = image.imageInfo.rotationDegrees
+                    image.close()
+                    c.resume(Pair(octets, rot))
+                  } catch (e: Exception) {
+                    image.close()
+                    c.resume(null)
+                  }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                  Log.w(TAG, "photo tel", exception)
+                  c.resume(null)
+                }
+              },
+          )
+        }
+    if (brut == null) return null
+    return withContext(Dispatchers.Default) {
+      val bmp = Detecteur.decodeBrut(brut.first) ?: return@withContext null
+      if (brut.second == 0) bmp
+      else {
+        val m = Matrix().apply { postRotate(brut.second.toFloat()) }
+        Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+      }
+    }
+  }
+
   /** Prend une photo nette avec les lunettes et l'analyse. */
   fun capturer() {
     if (!occupe.compareAndSet(false, true)) return
     viewModelScope.launch {
       try {
         var img: Bitmap? = null
-        val st = flux
+        if (telephone) img = photoTelephone()
+        val st = if (telephone) null else flux
         if (st != null) {
           var photo: PhotoData? = null
           st.capturePhoto()
@@ -544,12 +671,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
                 }
           }
         }
-        if (img == null) {
+        if (img == null && !telephone) {
           val y = dernierY
           if (y != null) img = Detecteur.depuisY(y, dernierYw, dernierYh)
         }
         if (img == null) {
-          statut("Pas d'image des lunettes. Démarre la caméra.")
+          statut("Pas d'image. Démarre la caméra (lunettes ou téléphone).")
         } else {
           val i = img
           withContext(Dispatchers.Default) { analyser(i) }

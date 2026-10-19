@@ -8,7 +8,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import android.content.pm.PackageManager
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -77,6 +82,24 @@ class MainActivity : ComponentActivity() {
         }
       }
 
+  private var vueEnAttente: PreviewView? = null
+  private val permissionCameraTel =
+      registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        val v = vueEnAttente
+        if (ok && v != null) jeu.demarrerTelephone(this, v)
+        vueEnAttente = null
+      }
+
+  private fun lancerTelephone(vue: PreviewView) {
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+        PackageManager.PERMISSION_GRANTED) {
+      jeu.demarrerTelephone(this, vue)
+    } else {
+      vueEnAttente = vue
+      permissionCameraTel.launch(Manifest.permission.CAMERA)
+    }
+  }
+
   private val choixPhoto =
       registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) jeu.analyserFichier(uri)
@@ -97,6 +120,7 @@ class MainActivity : ComponentActivity() {
               jeu = jeu,
               connecter = { Wearables.startRegistration(this) },
               camera = { jeu.demarrerCamera(::demandePermission) },
+              telephone = ::lancerTelephone,
               photo = { choixPhoto.launch("image/*") },
               modele = { choixModele.launch("*/*") },
           )
@@ -120,12 +144,17 @@ fun Ecran(
     jeu: Jeu,
     connecter: () -> Unit,
     camera: () -> Unit,
+    telephone: (PreviewView) -> Unit,
     photo: () -> Unit,
     modele: () -> Unit,
 ) {
   val e by jeu.etat.collectAsStateWithLifecycle()
   var saisie by remember { mutableStateOf("") }
   val large = Modifier.fillMaxWidth()
+  val ctx = LocalContext.current
+  val vue = remember {
+    PreviewView(ctx).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
+  }
 
   Column(
       modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -146,6 +175,15 @@ fun Ecran(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       Button(onClick = camera) { Text("Démarrer la caméra") }
       OutlinedButton(onClick = { jeu.arreterCamera() }) { Text("Arrêter") }
+    }
+
+    HorizontalDivider()
+    Text("1 bis. Caméra du téléphone (sans lunettes)", fontWeight = FontWeight.Bold)
+    Text("Pose le téléphone debout sur un support, face à l'échiquier, côté blancs.", fontSize = 13.sp)
+    AndroidView(factory = { vue }, modifier = large.height(260.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { telephone(vue) }) { Text("Démarrer la caméra du téléphone") }
+      OutlinedButton(onClick = { jeu.arreterTelephone() }) { Text("Arrêter") }
     }
 
     HorizontalDivider()

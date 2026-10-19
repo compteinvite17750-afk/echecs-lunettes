@@ -149,6 +149,16 @@ class Detecteur(modele: ByteArray) {
       return Coins.Gris(w, h, g)
     }
 
+    /** Décode un JPEG sans toucher à l'orientation (la rotation est gérée par l'appelant). */
+    fun decodeBrut(bytes: ByteArray): Bitmap? {
+      val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+      var sample = 1
+      while (max(opts.outWidth, opts.outHeight) / sample > 3000) sample *= 2
+      return BitmapFactory.decodeByteArray(
+          bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
     /** Décode une photo (JPEG/HEIC) en tenant compte de l'orientation EXIF, réduite si trop grande. */
     fun decode(bytes: ByteArray): Bitmap? {
       val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -16,6 +16,7 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
+    ndk { abiFilters += "arm64-v8a" }
 
     // Mode développeur Meta : pas besoin d'identifiants
     manifestPlaceholders["mwdat_application_id"] = "0"
@@ -60,4 +61,8 @@ dependencies {
   implementation(libs.mwdat.core)
   implementation(libs.mwdat.camera)
   implementation(libs.onnxruntime.android)
+  implementation("androidx.camera:camera-core:1.4.1")
+  implementation("androidx.camera:camera-camera2:1.4.1")
+  implementation("androidx.camera:camera-lifecycle:1.4.1")
+  implementation("androidx.camera:camera-view:1.4.1")
 }
