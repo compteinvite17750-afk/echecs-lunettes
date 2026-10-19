@@ -1,0 +1,73 @@
+name: Fabriquer l'application
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Télécharger Stockfish (Android arm64)
+        run: |
+          set -e
+          mkdir -p sf app/src/main/jniLibs/arm64-v8a
+          ok=""
+          for tag in sf_17.1 sf_17 sf_16.1; do
+            if curl -fsSL -o sf/sf.tar "https://github.com/official-stockfish/Stockfish/releases/download/$tag/stockfish-android-armv8.tar"; then
+              ok=$tag; break
+            fi
+          done
+          test -n "$ok"
+          echo "Stockfish $ok"
+          tar -xf sf/sf.tar -C sf
+          BIN=$(find sf -type f -name 'stockfish-android-armv8*' ! -name '*.tar' | head -1)
+          echo "binaire : $BIN"
+          cp "$BIN" app/src/main/jniLibs/arm64-v8a/libstockfish.so
+          ls -la app/src/main/jniLibs/arm64-v8a
+
+      - name: Modèle de détection
+        run: |
+          mkdir -p app/src/main/assets
+          if [ -f best.onnx ]; then cp best.onnx app/src/main/assets/best.onnx; echo "modèle inclus"; else echo "pas de best.onnx"; fi
+
+      - name: Compiler
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
+
+      - name: Publier l'application
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Version ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+          make_latest: true
+
+      - name: Enregistrer le journal d'erreurs
+        if: failure()
+        run: |
+          git config user.name "build"
+          git config user.email "build@users.noreply.github.com"
+          cp build.log /tmp/build.log 2>/dev/null || echo "pas de journal" > /tmp/build.log
+          git fetch origin journal || true
+          git checkout -B journal
+          git rm -r -q --cached . || true
+          cp /tmp/build.log build.log
+          git add -f build.log
+          git commit -m "Erreur de compilation (run ${{ github.run_number }})"
+          git push -f origin journal
