@@ -1,0 +1,63 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+  alias(libs.plugins.android.application)
+  alias(libs.plugins.jetbrains.kotlin.android)
+  alias(libs.plugins.compose.compiler)
+}
+
+android {
+  namespace = "fr.echecs.lunettes"
+  compileSdk = 36
+
+  defaultConfig {
+    applicationId = "fr.echecs.lunettes"
+    minSdk = 29
+    targetSdk = 36
+    versionCode = 1
+    versionName = "1.0"
+
+    // Mode développeur Meta : pas besoin d'identifiants
+    manifestPlaceholders["mwdat_application_id"] = "0"
+    manifestPlaceholders["mwdat_client_token"] = "0"
+  }
+
+  signingConfigs {
+    getByName("debug") {
+      storeFile = file("debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
+  }
+
+  buildTypes {
+    debug { signingConfig = signingConfigs.getByName("debug") }
+  }
+
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+  buildFeatures { compose = true }
+  androidResources { noCompress += "onnx" }
+  packaging {
+    resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    // Stockfish est livré comme "libstockfish.so" : il doit être extrait sur le téléphone
+    jniLibs { useLegacyPackaging = true }
+  }
+}
+
+kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
+
+dependencies {
+  implementation(libs.androidx.activity.compose)
+  implementation(platform(libs.androidx.compose.bom))
+  implementation(libs.androidx.material3)
+  implementation(libs.androidx.lifecycle.runtime.compose)
+  implementation(libs.androidx.lifecycle.viewmodel.compose)
+  implementation(libs.androidx.exifinterface)
+  implementation(libs.mwdat.core)
+  implementation(libs.mwdat.camera)
+  implementation(libs.onnxruntime.android)
+}
