@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.view.OrientationEventListener
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -96,6 +98,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var telephone = false
   private var fournisseur: ProcessCameraProvider? = null
   private var capturePhoto: ImageCapture? = null
+  private var capteurOrientation: OrientationEventListener? = null
   private val execAnalyse = Executors.newSingleThreadExecutor()
   private val fileImages = Dispatchers.Default.limitedParallelism(1)
 
@@ -567,6 +570,22 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             val photo =
                 ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build()
             capturePhoto = photo
+            // la photo suit la position réelle du téléphone (vertical ou horizontal)
+            capteurOrientation?.disable()
+            capteurOrientation =
+                object : OrientationEventListener(ctx) {
+                  override fun onOrientationChanged(deg: Int) {
+                    if (deg == ORIENTATION_UNKNOWN) return
+                    val rot =
+                        when {
+                          deg in 45..134 -> Surface.ROTATION_270
+                          deg in 135..224 -> Surface.ROTATION_180
+                          deg in 225..314 -> Surface.ROTATION_90
+                          else -> Surface.ROTATION_0
+                        }
+                    capturePhoto?.targetRotation = rot
+                  }
+                }.also { it.enable() }
             prov.unbindAll()
             prov.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, apercu, analyse, photo)
             telephone = true
@@ -583,6 +602,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   fun arreterTelephone() {
+    capteurOrientation?.disable()
     fournisseur?.unbindAll()
     telephone = false
     capturePhoto = null
