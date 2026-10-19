@@ -83,6 +83,18 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var coups = ArrayList<String>()
   private var moi = 'w'
   private var coinsSauves: Array<DoubleArray>? = null
+  private var rotMem = 0
+
+  private class Lecture(
+      val rot: Int,
+      val im: Bitmap,
+      val px: Array<DoubleArray>,
+      val rc: Coins.Resultat,
+      val r: Detecteur.Resultat,
+      val actuel: Int,
+      val notes: List<Partie.Note>,
+      val qualite: Int,
+  )
 
   private var moteur: Moteur? = null
   private var detecteur: Detecteur? = null
@@ -367,26 +379,46 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         return
       }
 
-      val rc = Coins.trouve(Detecteur.gris500(img), coinsSauves)
-      if (rc.score < Coins.SEUIL_OK) {
+      val b = Partie.depuisFen(e[0])
+      // On ne sait pas dans quel sens le téléphone est tenu : on essaie les 4 rotations
+      // de l'image et on garde celle où les pièces collent le mieux avec la partie.
+      var meil: Lecture? = null
+      val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
+      for (rot in ordre) {
+        val im =
+            if (rot == 0) img
+            else Bitmap.createBitmap(img, 0, 0, img.width, img.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
+        val rc1 = Coins.trouve(Detecteur.gris500(im), if (rot == rotMem) coinsSauves else null)
+        if (rc1.score < Coins.SEUIL_OK) continue
+        var px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
+        if (moi == 'b') px1 = arrayOf(px1[2], px1[3], px1[0], px1[1])
+        val r1 = det.detecte(im, px1) ?: continue
+        val act1 = Partie.ecart(r1.obs, Partie.occupation(b))
+        val notes1 = Partie.classe(b, legaux, r1.obs)
+        val q = minOf(act1, notes1[0].ecart)
+        if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q)
+        if (q <= 6) break
+      }
+      if (meil == null) {
         _etat.update { it.copy(image = Detecteur.dessine(img, null, null)) }
-        statut("Je ne vois pas bien l'échiquier (score %.2f).".format(rc.score))
+        statut("Je ne vois pas bien l'échiquier.")
         return
       }
-      var px = Array(4) { doubleArrayOf(rc.coins[it][0] * img.width, rc.coins[it][1] * img.height) }
-      if (moi == 'b') px = arrayOf(px[2], px[3], px[0], px[1])
-      val r = det.detecte(img, px) ?: return statut("Analyse impossible.")
-      val b = Partie.depuisFen(e[0])
-      val actuel = Partie.ecart(r.obs, Partie.occupation(b))
-      val notes = Partie.classe(b, legaux, r.obs)
+      val choix: Lecture = meil
+      val rc = choix.rc
+      val px = choix.px
+      val r = choix.r
+      val actuel = choix.actuel
+      val notes = choix.notes
+      val imgOk = choix.im
       val meilleur = notes[0]
       val marge = Partie.marge(notes)
       _etat.update {
         it.copy(
-            image = Detecteur.dessine(img, px, r.obs),
+            image = Detecteur.dessine(imgOk, px, r.obs),
             details =
                 "pièces vues ${r.nbPieces} · écart actuel $actuel · meilleur ${meilleur.coup} (${meilleur.ecart})" +
-                    " · marge $marge · plateau %.2f".format(rc.score),
+                    " · marge $marge · plateau %.2f · rotation ${choix.rot}".format(rc.score),
         )
       }
 
@@ -406,6 +438,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       incertain = 0
       coinsSauves = rc.coins
+      rotMem = choix.rot
       val fort = marge >= 3 && actuel - meilleur.ecart >= 4
       if (!fort && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
