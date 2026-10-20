@@ -316,8 +316,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   fun coupManuel(texte: String) {
     viewModelScope.launch(Dispatchers.Default) {
       val m = moteur ?: return@launch
-      val uci = texte.trim().lowercase()
       val legaux = m.coupsLegaux(position())
+      var uci = texte.trim().lowercase()
+      if (uci !in legaux && uci.length == 4) {
+        // départ et arrivée inversés (ex. a5g5 au lieu de g5a5) : on essaie dans l'autre sens
+        val inverse = uci.substring(2, 4) + uci.substring(0, 2)
+        if (inverse in legaux) uci = inverse
+      }
       if (uci !in legaux) {
         statut("« $texte » n'est pas un coup légal ici. Exemple : e7e5")
         return@launch
@@ -485,6 +490,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val meilleur = notes[0]
       val marge = Partie.marge(notes)
       val margeF = Partie.margeFine(notes)
+      // pièces vues en trop (pièces prises posées près de l'échiquier, doublons) : elles gonflent tous les écarts
+      // de la même façon, donc on les met de côté pour juger si une lecture est crédible
+      val attendues = b.count { it != '.' }
+      val extras = maxOf(0, choix.vue.nbPieces() - attendues)
       _etat.update {
         it.copy(
             image = Detecteur.dessine(imgOk, px, r.obs),
@@ -496,12 +505,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
       // marge d'un seul cran : acceptée si l'écart fin est net ; le coup est alors confirmé par une 2e photo
       val plausible =
-          meilleur.ecart <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && actuel - meilleur.ecart >= 1
+          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && actuel - meilleur.ecart >= 1
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
         // ou bien on reconnaît déjà le coup de l'adversaire (donc il a forcément joué le sien)
-        if (plausible || (av != null && actuel < Partie.ecart(r.obs, av))) attendMonCoup = false
+        // (une lecture "plausible" ne suffit pas : sinon on pourrait annoncer un 2e coup avant que tu aies joué)
+        if (av != null && actuel < Partie.ecart(r.obs, av)) attendMonCoup = false
       }
       if (!plausible) {
         coupEnAttente = null
@@ -509,7 +519,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           // On attend que le joueur joue son coup : on ne se plaint pas pendant qu'il joue.
           val av = occAvant
           val eAv = if (av != null) Partie.ecart(r.obs, av) else 99
-          if (eAv > 3 && actuel > 3) {
+          if (eAv - extras > 3 && actuel - extras > 3) {
             attenteVaine++
             if (attenteVaine >= 3) {
               // la photo ne ressemble ni à avant ni à maintenant : les deux ont dû jouer, on relit normalement
@@ -525,9 +535,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             return
           }
         }
-        if (actuel >= 4) {
+        if (actuel - extras >= 4) {
           incertain++
-          if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart)) {
+          if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
             incertain = 0
             return
           }
@@ -537,6 +547,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           }
           statut("Je ne reconnais pas le coup (essai $incertain).")
           if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien dans leur case.")
+          if (incertain == 10) parle("Tape le coup de l'adversaire dans la case en bas de l'écran.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 800
         } else {
           incertain = 0
@@ -548,7 +559,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       incertain = 0
       coinsSauves = rc.coins
       rotMem = choix.rot
-      val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
+      val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
       if (!fort && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
@@ -820,7 +831,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    * Le joueur a peut-être joué autre chose que le coup conseillé (et l'adversaire a peut-être déjà répondu).
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
    */
-  private fun resynchroniser(vue: Lecteur.Vue, ecartNormal: Int): Boolean {
+  private fun resynchroniser(vue: Lecteur.Vue, ecartNormal: Int, extras: Int = 0): Boolean {
     val m = moteur ?: return false
     if (coups.isEmpty()) return false
     val dernier = coups.last()
@@ -841,7 +852,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val best = cands.firstOrNull() ?: return false
     val autre = cands.firstOrNull { !it.occ.contentEquals(best.occ) }
     val marge = (autre?.ecart ?: 99) - best.ecart
-    if (best.ecart > 2 || marge < 2 || best.ecart >= ecartNormal) return false
+    if (best.ecart - extras > 2 || marge < 2 || best.ecart >= ecartNormal) return false
 
     val seq = best.seq
     val phraseMoi = Partie.decrire(bAvant, seq[0])

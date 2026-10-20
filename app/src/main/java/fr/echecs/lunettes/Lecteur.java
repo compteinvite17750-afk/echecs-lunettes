@@ -247,7 +247,7 @@ public final class Lecteur {
             for (int i = 0; i < n; i++) {
                 double[] uv = Coins.applique(h, xs[i], ys[i]);
                 if (uv[2] <= 0) continue;
-                if (uv[0] < -0.3 || uv[0] > 8.3 || uv[1] < -0.3 || uv[1] > 8.3) continue;
+                if (uv[0] < -0.15 || uv[0] > 8.15 || uv[1] < -0.15 || uv[1] > 8.15) continue;
                 ok[i] = true;
                 u[i] = uv[0];
                 v[i] = uv[1];

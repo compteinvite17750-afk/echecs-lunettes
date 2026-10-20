@@ -182,6 +182,9 @@ class Detecteur(modele: ByteArray) {
       var bc = cout(best)
       val bw = coins.maxOf { it[0] } - coins.minOf { it[0] }
       val bh = coins.maxOf { it[1] } - coins.minOf { it[1] }
+      // le quadrillage est déjà précis : on ne laisse pas le recalage s'éloigner de plus de ~0,4 case
+      val maxDx = 0.05 * bw
+      val maxDy = 0.05 * bh
       for (pas in doubleArrayOf(0.04, 0.02, 0.01, 0.005)) {
         var mieux = true
         var tours = 0
@@ -191,6 +194,7 @@ class Detecteur(modele: ByteArray) {
           for (k in 0..3) for (axe in 0..1) for (sg in intArrayOf(-1, 1)) {
             val t = Array(4) { best[it].clone() }
             t[k][axe] += sg * pas * (if (axe == 0) bw else bh)
+            if (Math.abs(t[k][axe] - coins[k][axe]) > (if (axe == 0) maxDx else maxDy)) continue
             val c = cout(t)
             if (c < bc) {
               best = t
