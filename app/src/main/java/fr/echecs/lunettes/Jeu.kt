@@ -133,7 +133,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     charger()
     tts =
         TextToSpeech(app) { st ->
-          if (st == TextToSpeech.SUCCESS) tts?.language = Locale.FRANCE
+          if (st == TextToSpeech.SUCCESS) {
+            tts?.language = Locale.FRANCE
+            tts?.setSpeechRate(0.85f)
+          }
         }
     viewModelScope.launch(Dispatchers.IO) {
       try {
@@ -214,9 +217,18 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   // ---------------- voix et affichage ----------------
-  private fun parle(t: String) {
-    _etat.update { it.copy(dernierePhrase = t) }
-    tts?.speak(t, TextToSpeech.QUEUE_FLUSH, null, "phrase")
+  private var dernierDit = ""
+
+  /** dit = ce qui est prononcé ("|" = petite pause), ecran = ce qui est écrit. */
+  private fun parle(dit: String, ecran: String = dit.replace("|", " ")) {
+    dernierDit = dit
+    _etat.update { it.copy(dernierePhrase = ecran) }
+    val t = tts ?: return
+    val parts = dit.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+    parts.forEachIndexed { i, s ->
+      if (i > 0) t.playSilentUtterance(700, TextToSpeech.QUEUE_ADD, "pause$i")
+      t.speak(s, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "phrase$i")
+    }
   }
 
   private fun statut(t: String) {
@@ -291,20 +303,21 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       val b = Partie.depuisFen(m.etat(position())[0])
       val phrase = Partie.decrire(b, uci)
+      val dite = Partie.dire(b, uci)
       coups.add(uci)
       sauver()
-      proposer("Adversaire : $phrase. ")
+      proposer("Adversaire : $phrase. ", "L'adversaire a joué : $dite. | ")
       majPartie()
     }
   }
 
   fun repeter() {
-    val p = _etat.value.dernierePhrase
-    if (p.isNotBlank()) parle(p)
+    val p = dernierDit
+    if (p.isNotBlank()) parle(p, _etat.value.dernierePhrase)
   }
 
   /** Demande à Stockfish mon coup, l'annonce et l'ajoute à la partie. */
-  private fun proposer(prefixe: String) {
+  private fun proposer(prefixe: String, prefixeDit: String = prefixe) {
     val m = moteur ?: return
     val pos = position()
     val legaux = m.coupsLegaux(pos)
@@ -317,6 +330,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val coup = m.meilleurCoup(pos, TEMPS_MOTEUR) ?: return
     val b = Partie.depuisFen(m.etat(pos)[0])
     val phrase = Partie.decrire(b, coup)
+    val dite = Partie.dire(b, coup)
     coups.add(coup)
     sauver()
     val pos2 = position()
@@ -329,7 +343,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           echec -> " Échec."
           else -> ""
         }
-    parle("${prefixe}Joue : $phrase.$suite")
+    parle("${prefixeDit}À toi de jouer : $dite.$suite", "${prefixe}Joue : $phrase.$suite")
     statut("TON COUP : $phrase.$suite")
     majPartie()
   }
@@ -454,9 +468,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       coupEnAttente = null
       val phrase = Partie.decrire(b, meilleur.coup)
+      val dite = Partie.dire(b, meilleur.coup)
       coups.add(meilleur.coup)
       sauver()
-      proposer("Adversaire : $phrase. ")
+      proposer("Adversaire : $phrase. ", "L'adversaire a joué : $dite. | ")
     } catch (ex: Exception) {
       Log.e(TAG, "analyse", ex)
       statut("ERREUR analyse : ${ex.message}")

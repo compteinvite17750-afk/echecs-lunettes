@@ -107,15 +107,72 @@ public final class Partie {
         }
     }
 
-    /** Phrase claire : « Fou de c1 prend en g5 ». */
+    static String article(char p) {
+        switch (Character.toLowerCase(p)) {
+            case 'p': return "le pion";
+            case 'n': return "le cavalier";
+            case 'b': return "le fou";
+            case 'r': return "la tour";
+            case 'q': return "la dame";
+            case 'k': return "le roi";
+            default: return "la pièce";
+        }
+    }
+
+    static String indefini(char p) {
+        switch (Character.toLowerCase(p)) {
+            case 'n': return "un cavalier";
+            case 'b': return "un fou";
+            case 'r': return "une tour";
+            default: return "une dame";
+        }
+    }
+
+    static String maj(String t) {
+        return t.substring(0, 1).toUpperCase() + t.substring(1);
+    }
+
+    /** Case prononcée clairement : « cé cinq ». */
+    static String caseParlee(int idx) {
+        String[] lettres = {"a", "bé", "cé", "dé", "eu", "èf", "gé", "ache"};
+        String[] chiffres = {"un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit"};
+        return lettres[idx % 8] + " " + chiffres[7 - idx / 8];
+    }
+
+    /** Phrase pour l'écran : « Le fou en c1, prend le pion en g5. » */
     public static String decrire(char[] b, String uci) {
+        return phrase(b, uci, false);
+    }
+
+    /** Même phrase, écrite pour être prononcée (cases épelées, pauses). */
+    public static String dire(char[] b, String uci) {
+        return phrase(b, uci, true);
+    }
+
+    private static String phrase(char[] b, String uci, boolean parle) {
         int de = caseDe(uci.substring(0, 2)), vers = caseDe(uci.substring(2, 4));
         char p = b[de];
-        if (Character.toLowerCase(p) == 'k' && Math.abs(vers % 8 - de % 8) == 2)
-            return vers % 8 > de % 8 ? "Petit roque" : "Grand roque";
-        boolean prise = b[vers] != '.' || (Character.toLowerCase(p) == 'p' && de % 8 != vers % 8);
-        String t = nomPiece(p) + " de " + nomCase(de) + (prise ? " prend en " : " en ") + nomCase(vers);
-        if (uci.length() >= 5) t += ", promotion en " + nomPiece(uci.charAt(4)).toLowerCase();
+        if (Character.toLowerCase(p) == 'k' && Math.abs(vers % 8 - de % 8) == 2) {
+            boolean petit = vers % 8 > de % 8;
+            int rang = de / 8;
+            int roiVers = vers;
+            int tourVers = rang * 8 + (petit ? 5 : 3);
+            String c1 = parle ? caseParlee(roiVers) : nomCase(roiVers);
+            String c2 = parle ? caseParlee(tourVers) : nomCase(tourVers);
+            return (petit ? "Petit roque" : "Grand roque") + ", le roi va en " + c1 + " et la tour en " + c2;
+        }
+        boolean enPassant = Character.toLowerCase(p) == 'p' && de % 8 != vers % 8 && b[vers] == '.';
+        boolean prise = b[vers] != '.' || enPassant;
+        String cd = parle ? caseParlee(de) : nomCase(de);
+        String cv = parle ? caseParlee(vers) : nomCase(vers);
+        String t = maj(article(p)) + " en " + cd + ", ";
+        if (prise) {
+            String cible = enPassant ? "le pion" : article(b[vers]);
+            t += "prend " + cible + " en " + (enPassant ? cv + ", en passant" : cv);
+        } else {
+            t += "va en " + cv;
+        }
+        if (uci.length() >= 5) t += ", et devient " + indefini(uci.charAt(4));
         return t;
     }
 }
