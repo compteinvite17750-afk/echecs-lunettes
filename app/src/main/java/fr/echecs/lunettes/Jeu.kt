@@ -89,6 +89,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
   // photos gardées pour réentraîner la reconnaissance (dossier Téléchargements/echecs-photos)
   private var dernierEnreg = 0L
+  private var dernierePropA = 0L
   private var nbEnreg = -1
 
   /** Garde une image où la position lue colle avec la partie suivie, avec la position exacte et les coins du plateau. */
@@ -96,10 +97,21 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     try {
       val now = SystemClock.elapsedRealtime()
       if (now - dernierEnreg < 4000) return
-      if (nbEnreg < 0) nbEnreg = prefs.getInt("nb_enreg", 0)
+      val res = getApplication<Application>().contentResolver
+      if (nbEnreg < 0 || nbEnreg >= 400) {
+        // on compte les photos réellement présentes dans le dossier (si tu les supprimes, ça repart)
+        val cur =
+            res.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? AND " + MediaStore.MediaColumns.MIME_TYPE + " = ?",
+                arrayOf("Download/echecs-photos%", "image/jpeg"),
+                null,
+            )
+        nbEnreg = cur?.use { it.count } ?: 0
+      }
       if (nbEnreg >= 400) return
       dernierEnreg = now
-      val res = getApplication<Application>().contentResolver
       val nom = "p" + System.currentTimeMillis()
       val cvImg = ContentValues()
       cvImg.put(MediaStore.MediaColumns.DISPLAY_NAME, "$nom.jpg")
@@ -116,7 +128,6 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val texte = fen + "\n" + moi + "\n" + pts + "\n"
       res.openOutputStream(uriTxt)?.use { it.write(texte.toByteArray()) }
       nbEnreg++
-      prefs.edit().putInt("nb_enreg", nbEnreg).apply()
     } catch (e: Exception) {
       Log.w("Jeu", "enregistrement impossible : " + e.message)
     }
@@ -407,6 +418,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val phrase = Partie.decrire(b, coup)
     val dite = Partie.dire(b, coup)
     occAvant = Partie.occupation(b)
+    dernierePropA = SystemClock.elapsedRealtime()
     attendMonCoup = true
     attenteVaine = 0
     coups.add(coup)
@@ -542,8 +554,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
 
       // marge d'un seul cran : acceptée si l'écart fin est net ; le coup est alors confirmé par une 2e photo
+      // juste après que je t'ai donné ton coup, l'adversaire n'a pas eu le temps de répondre : on est plus exigeant
+      // (un coup « fantôme » dû à une main ou une ombre ne doit pas me faire annoncer un 2e coup de suite)
+      val recent = SystemClock.elapsedRealtime() - dernierePropA < 6000L
       val plausible =
-          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && actuel - meilleur.ecart >= 1
+          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) &&
+              actuel - meilleur.ecart >= (if (recent) 2 else 1)
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
@@ -598,7 +614,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       coinsSauves = rc.coins
       rotMem = choix.rot
       val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
-      if (!fort && coupEnAttente != meilleur.coup) {
+      if ((!fort || recent) && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
         verifDemandeeA = SystemClock.elapsedRealtime() + 800
