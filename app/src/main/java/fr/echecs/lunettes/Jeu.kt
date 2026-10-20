@@ -84,6 +84,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var moi = 'w'
   private var coinsSauves: Array<DoubleArray>? = null
   private var rotMem = 0
+  private var baseFen: String? = null // position de départ si la partie a été reprise en cours de route
+  private var partieActive = false // true quand l'application suit une partie
+  private var autoReprise = true // false après une fin de partie, jusqu'à ce qu'on revoie une position de départ
+  private var lectureVue: String? = null // dernière lecture complète (il en faut 2 identiques)
 
   private class Lecture(
       val rot: Int,
@@ -163,6 +167,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun charger() {
     coups = ArrayList(prefs.getString("coups", "")!!.split(" ").filter { it.isNotBlank() })
     moi = prefs.getString("moi", "w")!![0]
+    baseFen = prefs.getString("base", "")!!.ifBlank { null }
     Partie.style = prefs.getInt("style_cases", 0)
     coinsSauves =
         prefs.getString("coins", null)?.let { s ->
@@ -176,12 +181,17 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         .edit()
         .putString("coups", coups.joinToString(" "))
         .putString("moi", moi.toString())
+        .putString("base", baseFen ?: "")
         .putString("coins", coinsSauves?.joinToString(",") { "${it[0]},${it[1]}" })
         .apply()
   }
 
-  private fun position(): String =
-      if (coups.isEmpty()) "position startpos" else "position startpos moves " + coups.joinToString(" ")
+  private fun positionDe(l: List<String>): String {
+    val base = baseFen?.let { "position fen $it" } ?: "position startpos"
+    return if (l.isEmpty()) base else "$base moves " + l.joinToString(" ")
+  }
+
+  private fun position(): String = positionDe(coups)
 
   // ---------------- modèle ----------------
   private fun chargerModele() {
@@ -265,6 +275,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   fun nouvellePartie(blancs: Boolean) {
     viewModelScope.launch(Dispatchers.Default) {
       coups.clear()
+      baseFen = null
+      partieActive = true
+      autoReprise = true
+      attendMonCoup = false
       moi = if (blancs) 'w' else 'b'
       coupEnAttente = null
       incertain = 0
@@ -341,6 +355,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val echec = m.etat(pos)[1] == "1"
       parle(prefixe + if (echec) "Échec et mat. La partie est finie." else "Pat. Match nul.")
       statut("Partie terminée.")
+      partieActive = false
+      autoReprise = false
       return
     }
     val coup = m.meilleurCoup(pos, TEMPS_MOTEUR) ?: return
@@ -355,6 +371,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val pos2 = position()
     val fini = m.coupsLegaux(pos2).isEmpty()
     val echec = m.etat(pos2)[1] == "1"
+    if (fini) {
+      partieActive = false
+      autoReprise = false
+    }
     val suite =
         when {
           fini && echec -> " Échec et mat, tu as gagné !"
@@ -369,6 +389,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
   private fun partieEnCours(): Boolean {
     val m = moteur ?: return false
+    if (!partieActive) return true // on cherche encore la partie
     return try {
       val pos = position()
       val trait = m.etat(pos)[0].split(" ")[1][0]
@@ -401,6 +422,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val det = detecteur ?: return statut("Le modèle n'est pas chargé.")
     _etat.update { it.copy(enAnalyse = true) }
     try {
+      if (!partieActive) {
+        demarrageAuto(img, det, m)
+        return
+      }
       val pos = position()
       val e = m.etat(pos)
       val trait = e[0].split(" ")[1][0]
@@ -491,6 +516,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             incertain = 0
             return
           }
+          if (incertain >= 5 && relireTout(choix)) {
+            incertain = 0
+            return
+          }
           statut("Je ne reconnais pas le coup (essai $incertain).")
           if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien au milieu des cases.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 1500
@@ -524,6 +553,187 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
   }
 
+  // ---------------- démarrage et reprise automatiques ----------------
+  private class Cas(
+      val rot: Int,
+      val rc: Coins.Resultat,
+      val px: Array<DoubleArray>,
+      val r: Detecteur.Resultat,
+  )
+
+  private fun tourner(img: Bitmap, rot: Int): Bitmap =
+      if (rot == 0) img
+      else Bitmap.createBitmap(img, 0, 0, img.width, img.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
+
+  /** Quand aucune partie n'est suivie : reconnaît une nouvelle partie, reprend la partie en cours, ou relit tout l'échiquier. */
+  private fun demarrageAuto(img: Bitmap, det: Detecteur, m: Moteur) {
+    val occDepart = Partie.occupation(Partie.depuisFen(Lecteur.FEN_DEPART))
+    val occDepartInv = Partie.occupation(Lecteur.tourne180(Partie.depuisFen(Lecteur.FEN_DEPART)))
+    val candDepart = listOf(occDepart, occDepartInv)
+    val cas = ArrayList<Cas>()
+    val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
+    for (rot in ordre) {
+      val im = tourner(img, rot)
+      val rc1 = Coins.trouve(Detecteur.gris500(im), if (rot == rotMem) coinsSauves else null)
+      if (rc1.score < Coins.SEUIL_OK) continue
+      val px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
+      val r0 = det.detecte(im, px1) ?: continue
+      val pxR = Detecteur.raffine(r0.pts, px1, candDepart)
+      val o = Detecteur.observer(r0.pts, pxR) ?: continue
+      val eW = Partie.ecart(o, occDepart)
+      val eB = Partie.ecart(o, occDepartInv)
+      cas.add(Cas(rot, rc1, pxR, Detecteur.Resultat(o, r0.nbPieces, r0.pts)))
+      if (minOf(eW, eB) <= 3) {
+        // nouvelle partie : les pièces sont en position de départ
+        _etat.update { it.copy(image = Detecteur.dessine(im, pxR, o)) }
+        moi = if (eW <= eB) 'w' else 'b'
+        baseFen = null
+        coups.clear()
+        rotMem = rot
+        coinsSauves = rc1.coins
+        partieActive = true
+        autoReprise = true
+        attendMonCoup = false
+        coupEnAttente = null
+        incertain = 0
+        lectureVue = null
+        sauver()
+        majPartie()
+        if (moi == 'w') proposer("Nouvelle partie reconnue. ", "Nouvelle partie. ")
+        else {
+          statut("Nouvelle partie reconnue : tu as les noirs. J'attends le coup des blancs.")
+          parle("Nouvelle partie. Tu as les noirs. J'attends le coup des blancs.")
+        }
+        return
+      }
+    }
+    if (cas.isEmpty()) {
+      statut("Je cherche l'échiquier…")
+      return
+    }
+    if (!autoReprise) {
+      statut("Partie terminée. Remets les pièces en place pour une nouvelle partie.")
+      return
+    }
+
+    // La partie sauvegardée correspond-elle à ce qu'on voit ? Alors on la reprend.
+    if (coups.isNotEmpty() || baseFen != null) {
+      val pos = position()
+      val b = Partie.depuisFen(m.etat(pos)[0])
+      val legaux = m.coupsLegaux(pos)
+      if (legaux.isNotEmpty()) {
+        val cands = ArrayList<IntArray>()
+        cands.add(Partie.occupation(b))
+        for (mv in legaux) cands.add(Partie.occupation(Partie.apres(b, mv)))
+        for (c in cas) {
+          var pxT = c.px
+          if (moi == 'b') pxT = arrayOf(pxT[2], pxT[3], pxT[0], pxT[1])
+          pxT = Detecteur.raffine(c.r.pts, pxT, cands)
+          val o = Detecteur.observer(c.r.pts, pxT) ?: continue
+          val ec = Partie.ecart(o, cands[0])
+          val ne = Partie.classe(b, legaux, o)[0].ecart
+          if (minOf(ec, ne) <= 4) {
+            rotMem = c.rot
+            coinsSauves = c.rc.coins
+            partieActive = true
+            incertain = 0
+            lectureVue = null
+            statut("Partie reprise.")
+            parle("Partie reprise.")
+            majPartie()
+            return
+          }
+        }
+      }
+    }
+
+    // Sinon : on relit toutes les pièces de l'échiquier.
+    var meilleurPlateau: CharArray? = null
+    var meilleurScore = Int.MIN_VALUE
+    var joueur = 'w'
+    var rotChoisie = 0
+    var rcChoisi: Coins.Resultat? = null
+    for (c in cas) {
+      val lu = Detecteur.lire(c.r.pts, c.px)
+      for (inverse in listOf(false, true)) {
+        val plateau = if (inverse) Lecteur.tourne180(lu) else lu
+        if (!Lecteur.valide(plateau)) continue
+        val sc = Lecteur.scoreOrientation(plateau)
+        if (sc > meilleurScore) {
+          meilleurScore = sc
+          meilleurPlateau = plateau
+          joueur = if (inverse) 'b' else 'w'
+          rotChoisie = c.rot
+          rcChoisi = c.rc
+        }
+      }
+    }
+    val plateau = meilleurPlateau
+    if (plateau == null || meilleurScore < 6) {
+      lectureVue = null
+      statut("Je n'arrive pas à reconnaître toutes les pièces.")
+      return
+    }
+    if (adopter(plateau, joueur, "Partie reconnue. ")) {
+      rotMem = rotChoisie
+      coinsSauves = rcChoisi?.coins
+      sauver()
+    }
+  }
+
+  /** Quand le suivi est perdu : on relit tout l'échiquier pour se recaler. */
+  private fun relireTout(choix: Lecture): Boolean {
+    // les coins de la lecture sont déjà retournés quand je joue les noirs : le plateau est dans le bon sens
+    val lu = Detecteur.lire(choix.r.pts, choix.px)
+    return adopter(lu, moi, "Je me suis recalé sur l'échiquier. ")
+  }
+
+  /** Adopte une position lue sur l'échiquier (2 lectures identiques de suite) et donne mon coup. */
+  private fun adopter(plateau: CharArray, joueur: Char, intro: String): Boolean {
+    val m = moteur ?: return false
+    if (!Lecteur.valide(plateau)) {
+      lectureVue = null
+      statut("Je n'arrive pas à reconnaître toutes les pièces.")
+      return false
+    }
+    val fen = Lecteur.fen(plateau, joueur)
+    if (lectureVue != fen) {
+      lectureVue = fen
+      statut("Je lis l'échiquier…")
+      return false
+    }
+    lectureVue = null
+    val ancienneBase = baseFen
+    val anciensCoups = ArrayList(coups)
+    baseFen = fen
+    coups.clear()
+    val ok =
+        try {
+          val autre = Lecteur.fen(plateau, if (joueur == 'w') 'b' else 'w')
+          val horsJeu = m.etat("position fen $autre")[1] == "1" // le camp qui ne joue pas ne peut pas être en échec
+          !horsJeu && m.coupsLegaux(position()).isNotEmpty()
+        } catch (e: Exception) {
+          false
+        }
+    if (!ok) {
+      baseFen = ancienneBase
+      coups.clear()
+      coups.addAll(anciensCoups)
+      statut("La position lue n'est pas possible aux échecs. Je réessaie.")
+      return false
+    }
+    moi = joueur
+    partieActive = true
+    autoReprise = true
+    attendMonCoup = false
+    coupEnAttente = null
+    incertain = 0
+    sauver()
+    majPartie()
+    proposer(intro, intro)
+    return true
+  }
+
   /**
    * Le joueur a peut-être joué autre chose que le coup conseillé (et l'adversaire a peut-être déjà répondu).
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
@@ -533,20 +743,18 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     if (coups.isEmpty()) return false
     val dernier = coups.last()
     val avant = ArrayList<String>(coups.subList(0, coups.size - 1))
-    fun posDe(l: List<String>) =
-        if (l.isEmpty()) "position startpos" else "position startpos moves " + l.joinToString(" ")
-    val bAvant = Partie.depuisFen(m.etat(posDe(avant))[0])
+    val bAvant = Partie.depuisFen(m.etat(positionDe(avant))[0])
     class Cand(val ecart: Int, val seq: List<String>, val occ: IntArray)
     val cands = ArrayList<Cand>()
     fun note(b: CharArray, seq: List<String>) {
       val occ = Partie.occupation(b)
       cands.add(Cand(minOf(Partie.ecart(obs, occ), Partie.ecart(brut, occ)), seq, occ))
     }
-    for (alt in m.coupsLegaux(posDe(avant))) {
+    for (alt in m.coupsLegaux(positionDe(avant))) {
       if (alt == dernier) continue
       val bAlt = Partie.apres(bAvant, alt)
       note(bAlt, listOf(alt))
-      for (rep in m.coupsLegaux(posDe(avant + alt))) note(Partie.apres(bAlt, rep), listOf(alt, rep))
+      for (rep in m.coupsLegaux(positionDe(avant + alt))) note(Partie.apres(bAlt, rep), listOf(alt, rep))
     }
     cands.sortBy { it.ecart }
     val best = cands.firstOrNull() ?: return false

@@ -31,6 +31,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -154,6 +156,11 @@ fun Ecran(
   val ctx = LocalContext.current
   val vue = remember {
     PreviewView(ctx).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
+  }
+  // La caméra du téléphone démarre toute seule à l'ouverture de l'application.
+  LaunchedEffect(Unit) {
+    delay(1500)
+    telephone(vue)
   }
 
   Column(

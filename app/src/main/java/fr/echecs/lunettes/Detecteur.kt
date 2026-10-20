@@ -24,11 +24,11 @@ class Detecteur(modele: ByteArray) {
   private val nomEntree: String = session.inputNames.first()
 
   /** Pied d'une pièce détectée : position dans l'image (pixels) et luminosité. */
-  class Pt(val x: Double, val y: Double, val lum: Double)
+  class Pt(val x: Double, val y: Double, val lum: Double, val cls: Int = 0, val conf: Double = 0.0)
 
   class Resultat(val obs: IntArray, val nbPieces: Int, val pts: List<Pt> = emptyList())
 
-  private class Boite(val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float) {
+  private class Boite(val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float, val cls: Int = 0) {
     fun iou(o: Boite): Float {
       val x1 = max(cx - w / 2, o.cx - o.w / 2)
       val y1 = max(cy - h / 2, o.cy - o.h / 2)
@@ -91,8 +91,14 @@ class Detecteur(modele: ByteArray) {
     val boites = ArrayList<Boite>()
     for (i in 0 until n) {
       var m = 0f
-      for (c in 0 until nc) m = max(m, sortie[4 + c][i])
-      if (m > 0.25f) boites.add(Boite(sortie[0][i], sortie[1][i], sortie[2][i], sortie[3][i], m))
+      var mc = 0
+      for (c in 0 until nc) {
+        if (sortie[4 + c][i] > m) {
+          m = sortie[4 + c][i]
+          mc = c
+        }
+      }
+      if (m > 0.25f) boites.add(Boite(sortie[0][i], sortie[1][i], sortie[2][i], sortie[3][i], m, mc))
     }
     boites.sortByDescending { it.conf }
     val finales = ArrayList<Boite>()
@@ -117,7 +123,7 @@ class Detecteur(modele: ByteArray) {
         tot += lum(zpx[yy * cw + xx])
         k++
       }
-      if (k > 0) pts.add(Pt(cx + cx0, cy + cy0 + BASE * h, tot / k))
+      if (k > 0) pts.add(Pt(cx + cx0, cy + cy0 + BASE * h, tot / k, b.cls, b.conf.toDouble()))
     }
     val obs = observer(pts, coinsPx) ?: IntArray(64)
     return Resultat(obs, finales.size, pts)
@@ -126,27 +132,25 @@ class Detecteur(modele: ByteArray) {
   companion object {
     /** Occupation des 64 cases (0 vide, 1 blanc, 2 noir) à partir des pieds de pièces et des 4 coins. */
     fun observer(pts: List<Pt>, coinsPx: Array<DoubleArray>): IntArray? {
-      val h = Coins.homographie(coinsPx, Coins.SQ) ?: return null
-      class Det(val idx: Int, val lum: Double)
-      val dets = ArrayList<Det>()
-      for (p in pts) {
-        val uv = Coins.applique(h, p.x, p.y)
-        if (uv[2] <= 0) continue
-        // les pièces posées à côté de l'échiquier (pièces prises) ne comptent pas
-        if (uv[0] < -0.3 || uv[0] > 8.3 || uv[1] < -0.3 || uv[1] > 8.3) continue
-        val col = floor(uv[0]).toInt().coerceIn(0, 7)
-        val row = floor(uv[1]).toInt().coerceIn(0, 7)
-        dets.add(Det(row * 8 + col, p.lum))
-      }
-      val obs = IntArray(64)
-      if (dets.isEmpty()) return obs
-      val lums = dets.map { it.lum }.sorted()
-      val seuil =
-          if (lums.size % 2 == 1) lums[lums.size / 2]
-          else (lums[lums.size / 2 - 1] + lums[lums.size / 2]) / 2
-      for (d in dets) if (obs[d.idx] == 0) obs[d.idx] = if (d.lum > seuil) 1 else 2
-      return obs
+      if (Coins.homographie(coinsPx, Coins.SQ) == null) return null
+      return Lecteur.occupation(
+          coinsPx,
+          DoubleArray(pts.size) { pts[it].x },
+          DoubleArray(pts.size) { pts[it].y },
+          DoubleArray(pts.size) { pts[it].lum },
+      )
     }
+
+    /** Position complète lue (lettres FEN, majuscule = blanc), vue depuis la caméra. */
+    fun lire(pts: List<Pt>, coinsPx: Array<DoubleArray>): CharArray =
+        Lecteur.lire(
+            coinsPx,
+            DoubleArray(pts.size) { pts[it].x },
+            DoubleArray(pts.size) { pts[it].y },
+            DoubleArray(pts.size) { pts[it].lum },
+            IntArray(pts.size) { pts[it].cls },
+            DoubleArray(pts.size) { pts[it].conf },
+        )
 
     /**
      * Recale les 4 coins pour que les pièces vues collent au mieux avec la position attendue
