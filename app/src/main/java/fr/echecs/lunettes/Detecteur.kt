@@ -23,7 +23,10 @@ class Detecteur(modele: ByteArray) {
   private val session: OrtSession = env.createSession(modele, OrtSession.SessionOptions())
   private val nomEntree: String = session.inputNames.first()
 
-  class Resultat(val obs: IntArray, val nbPieces: Int)
+  /** Pied d'une pièce détectée : position dans l'image (pixels) et luminosité. */
+  class Pt(val x: Double, val y: Double, val lum: Double)
+
+  class Resultat(val obs: IntArray, val nbPieces: Int, val pts: List<Pt> = emptyList())
 
   private class Boite(val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float) {
     fun iou(o: Boite): Float {
@@ -41,7 +44,7 @@ class Detecteur(modele: ByteArray) {
    * (déjà retournés si on joue les noirs). Retourne l'occupation des 64 cases.
    */
   fun detecte(img: Bitmap, coinsPx: Array<DoubleArray>): Resultat? {
-    val versPlateau = Coins.homographie(coinsPx, Coins.SQ) ?: return null
+    Coins.homographie(coinsPx, Coins.SQ) ?: return null
 
     // On ne garde que la zone autour de l'échiquier (+ de la marge en haut pour les pièces hautes)
     val xs = coinsPx.map { it[0] }
@@ -98,17 +101,12 @@ class Detecteur(modele: ByteArray) {
     // Luminosité de chaque pièce (pour savoir si elle est blanche ou noire)
     val zpx = IntArray(cw * ch)
     zone.getPixels(zpx, 0, cw, 0, 0, cw, ch)
-    class Det(val idx: Int, val lum: Double)
-    val dets = ArrayList<Det>()
+    val pts = ArrayList<Pt>()
     for (b in finales) {
       val cx = b.cx / s
       val cy = b.cy / s
       val w = b.w / s
       val h = b.h / s
-      val uv = Coins.applique(versPlateau, cx + cx0, cy + cy0 + BASE * h)
-      if (uv[0] < -0.5 || uv[0] > 8.5 || uv[1] < -0.5 || uv[1] > 8.5) continue
-      val col = floor(uv[0]).toInt().coerceIn(0, 7)
-      val row = floor(uv[1]).toInt().coerceIn(0, 7)
       val y1 = max(0, (cy - h * 0.2).toInt())
       val y2 = min(ch, max(y1 + 1, (cy + h * 0.2).toInt() + 1))
       val x1 = max(0, (cx - w * 0.2).toInt())
@@ -119,19 +117,76 @@ class Detecteur(modele: ByteArray) {
         tot += lum(zpx[yy * cw + xx])
         k++
       }
-      if (k > 0) dets.add(Det(row * 8 + col, tot / k))
+      if (k > 0) pts.add(Pt(cx + cx0, cy + cy0 + BASE * h, tot / k))
     }
-    val obs = IntArray(64)
-    if (dets.isEmpty()) return Resultat(obs, finales.size)
-    val lums = dets.map { it.lum }.sorted()
-    val seuil =
-        if (lums.size % 2 == 1) lums[lums.size / 2]
-        else (lums[lums.size / 2 - 1] + lums[lums.size / 2]) / 2
-    for (d in dets) if (obs[d.idx] == 0) obs[d.idx] = if (d.lum > seuil) 1 else 2
-    return Resultat(obs, finales.size)
+    val obs = observer(pts, coinsPx) ?: IntArray(64)
+    return Resultat(obs, finales.size, pts)
   }
 
   companion object {
+    /** Occupation des 64 cases (0 vide, 1 blanc, 2 noir) à partir des pieds de pièces et des 4 coins. */
+    fun observer(pts: List<Pt>, coinsPx: Array<DoubleArray>): IntArray? {
+      val h = Coins.homographie(coinsPx, Coins.SQ) ?: return null
+      class Det(val idx: Int, val lum: Double)
+      val dets = ArrayList<Det>()
+      for (p in pts) {
+        val uv = Coins.applique(h, p.x, p.y)
+        if (uv[2] <= 0) continue
+        if (uv[0] < -0.5 || uv[0] > 8.5 || uv[1] < -0.5 || uv[1] > 8.5) continue
+        val col = floor(uv[0]).toInt().coerceIn(0, 7)
+        val row = floor(uv[1]).toInt().coerceIn(0, 7)
+        dets.add(Det(row * 8 + col, p.lum))
+      }
+      val obs = IntArray(64)
+      if (dets.isEmpty()) return obs
+      val lums = dets.map { it.lum }.sorted()
+      val seuil =
+          if (lums.size % 2 == 1) lums[lums.size / 2]
+          else (lums[lums.size / 2 - 1] + lums[lums.size / 2]) / 2
+      for (d in dets) if (obs[d.idx] == 0) obs[d.idx] = if (d.lum > seuil) 1 else 2
+      return obs
+    }
+
+    /**
+     * Recale les 4 coins pour que les pièces vues collent au mieux avec la position attendue
+     * (la position actuelle ou celle après l'un des coups légaux).
+     */
+    fun raffine(pts: List<Pt>, coins: Array<DoubleArray>, candidats: List<IntArray>): Array<DoubleArray> {
+      fun cout(c: Array<DoubleArray>): Int {
+        val o = observer(pts, c) ?: return 999
+        var m = 999
+        for (a in candidats) {
+          var n = 0
+          for (i in 0 until 64) if (o[i] != a[i]) n++
+          if (n < m) m = n
+        }
+        return m
+      }
+      var best = Array(4) { coins[it].clone() }
+      var bc = cout(best)
+      val bw = coins.maxOf { it[0] } - coins.minOf { it[0] }
+      val bh = coins.maxOf { it[1] } - coins.minOf { it[1] }
+      for (pas in doubleArrayOf(0.04, 0.02, 0.01, 0.005)) {
+        var mieux = true
+        var tours = 0
+        while (mieux && tours < 6 && bc > 0) {
+          mieux = false
+          tours++
+          for (k in 0..3) for (axe in 0..1) for (sg in intArrayOf(-1, 1)) {
+            val t = Array(4) { best[it].clone() }
+            t[k][axe] += sg * pas * (if (axe == 0) bw else bh)
+            val c = cout(t)
+            if (c < bc) {
+              best = t
+              bc = c
+              mieux = true
+            }
+          }
+        }
+      }
+      return best
+    }
+
     /** Où se trouve le "pied" de la pièce dans sa boîte (0 = centre, 0.5 = bas). */
     const val BASE = 0.40
 

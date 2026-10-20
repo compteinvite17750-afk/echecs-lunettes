@@ -383,6 +383,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // On ne sait pas dans quel sens le téléphone est tenu : on essaie les 4 rotations
       // de l'image et on garde celle où les pièces collent le mieux avec la partie.
       var meil: Lecture? = null
+      val candidats = ArrayList<IntArray>()
+      candidats.add(Partie.occupation(b))
+      for (m1 in legaux) candidats.add(Partie.occupation(Partie.apres(b, m1)))
       val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
       for (rot in ordre) {
         val im =
@@ -392,7 +395,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (rc1.score < Coins.SEUIL_OK) continue
         var px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
         if (moi == 'b') px1 = arrayOf(px1[2], px1[3], px1[0], px1[1])
-        val r1 = det.detecte(im, px1) ?: continue
+        val r0 = det.detecte(im, px1) ?: continue
+        // recalage fin des coins grâce aux pièces (la position attendue est connue)
+        px1 = Detecteur.raffine(r0.pts, px1, candidats)
+        val r1 = Detecteur.Resultat(Detecteur.observer(r0.pts, px1) ?: r0.obs, r0.nbPieces, r0.pts)
         val act1 = Partie.ecart(r1.obs, Partie.occupation(b))
         val notes1 = Partie.classe(b, legaux, r1.obs)
         val q = minOf(act1, notes1[0].ecart)
