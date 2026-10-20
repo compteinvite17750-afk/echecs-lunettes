@@ -446,12 +446,17 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       candidats.add(Partie.occupation(b))
       for (m1 in legaux) candidats.add(Partie.occupation(Partie.apres(b, m1)))
       val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
+      val plateau = trouverPlateau(img, det)
+      if (plateau == null) {
+        _etat.update { it.copy(image = Detecteur.dessine(img, null, null)) }
+        statut("Je cherche l'échiquier…")
+        return
+      }
       for (rot in ordre) {
-        val im =
-            if (rot == 0) img
-            else Bitmap.createBitmap(img, 0, 0, img.width, img.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
-        val rc1 = Coins.trouve(Detecteur.gris500(im), if (rot == rotMem) coinsSauves else null)
-        if (rc1.score < Coins.SEUIL_OK) continue
+        // l'image reste droite (les pièces doivent être debout pour être reconnues) : c'est le plateau qu'on
+        // tourne, en décalant les coins d'un cran (4 orientations possibles du plateau)
+        val im = img
+        val rc1 = coinsPour(plateau, img, rot)
         var px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
         if (moi == 'b') px1 = arrayOf(px1[2], px1[3], px1[0], px1[1])
         val r0 = det.detecte(im, px1) ?: continue
@@ -488,7 +493,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         )
       }
 
-      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 2
+      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 1
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
@@ -568,6 +573,55 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val r: Detecteur.Resultat,
   )
 
+  // dernière position sûre du plateau (fractions de l'image non tournée) : sert quand une image est mauvaise
+  private var plateauSur: Array<DoubleArray>? = null
+  private var plateauSurA = 0L
+
+  /**
+   * Repère l'échiquier par son quadrillage (aidé par les pieds des pièces). Si l'image est mauvaise
+   * (main devant, pièces qui cachent), on garde la dernière position sûre : le téléphone ne bouge pas.
+   */
+  private fun trouverPlateau(img: Bitmap, det: Detecteur): Array<DoubleArray>? {
+    val maintenant = SystemClock.elapsedRealtime()
+    val sur = plateauSur
+    // sur trépied : on ne refait pas toute la recherche à chaque image
+    if (sur != null && telephone && maintenant - plateauSurA < 6000L) return sur
+    try {
+      val g = Detecteur.gris1000(img)
+      val toute = arrayOf(
+          doubleArrayOf(0.0, 0.0),
+          doubleArrayOf(img.width.toDouble(), 0.0),
+          doubleArrayOf(img.width.toDouble(), img.height.toDouble()),
+          doubleArrayOf(0.0, img.height.toDouble()),
+      )
+      val pts = det.detecte(img, toute)?.pts ?: emptyList()
+      val s = g.w.toDouble() / img.width
+      val pieds = ArrayList<DoubleArray>()
+      for (p in pts) if (p.conf > 0.4) pieds.add(doubleArrayOf(p.x * s, p.y * s))
+      val res = Lattice.trouve(g, pieds)
+      if (res != null && res.v >= Lattice.SEUIL) {
+        val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
+        plateauSur = fr
+        plateauSurA = maintenant
+        return fr
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "repérage du plateau : $e")
+    }
+    return sur
+  }
+
+  /**
+   * Les 4 coins du plateau (fractions de l'image), décalés de rot/90 crans : on ne sait pas de quel côté
+   * sont les blancs. Ordre de base : haut-gauche, haut-droit, bas-droit, bas-gauche de l'image.
+   */
+  private fun coinsPour(fr: Array<DoubleArray>, img: Bitmap, rot: Int): Coins.Resultat {
+    val px = Array(4) { doubleArrayOf(fr[it][0] * img.width, fr[it][1] * img.height) }
+    val base = Lattice.pourRotation(px, img.width, img.height, 0)
+    val dec = (rot / 90) % 4
+    return Coins.Resultat(Array(4) { base[(it + dec) % 4] }, 1.0)
+  }
+
   private fun tourner(img: Bitmap, rot: Int): Bitmap =
       if (rot == 0) img
       else Bitmap.createBitmap(img, 0, 0, img.width, img.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
@@ -579,10 +633,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val candDepart = listOf(occDepart, occDepartInv)
     val cas = ArrayList<Cas>()
     val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
+    val plateau = trouverPlateau(img, det)
+    if (plateau == null) {
+      statut("Je cherche l'échiquier…")
+      return
+    }
     for (rot in ordre) {
-      val im = tourner(img, rot)
-      val rc1 = Coins.trouve(Detecteur.gris500(im), if (rot == rotMem) coinsSauves else null)
-      if (rc1.score < Coins.SEUIL_OK) continue
+      val im = img
+      val rc1 = coinsPour(plateau, img, rot)
       val px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
       val r0 = det.detecte(im, px1) ?: continue
       val pxR = Detecteur.raffine(r0.pts, px1, candDepart)

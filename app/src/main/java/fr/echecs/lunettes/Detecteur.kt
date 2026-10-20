@@ -209,6 +209,17 @@ class Detecteur(modele: ByteArray) {
     fun lum(c: Int): Double =
         ((c shr 16) and 255) * 0.299 + ((c shr 8) and 255) * 0.587 + (c and 255) * 0.114
 
+    /** Image en gris réduite à 1000 pixels de large au plus, pour le repérage du quadrillage. */
+    fun gris1000(img: Bitmap): Coins.Gris {
+      val w = min(1000, img.width)
+      val h = max(1, (img.height * w.toDouble() / img.width).toInt())
+      val b = Bitmap.createScaledBitmap(img, w, h, true)
+      val px = IntArray(w * h)
+      b.getPixels(px, 0, w, 0, 0, w, h)
+      val g = FloatArray(w * h) { lum(px[it]).toFloat() }
+      return Coins.Gris(w, h, g)
+    }
+
     /** Image en gris réduite à 500 pixels de large, pour la recherche de l'échiquier. */
     fun gris500(img: Bitmap): Coins.Gris {
       val w = 500
