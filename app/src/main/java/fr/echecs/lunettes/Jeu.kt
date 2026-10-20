@@ -487,11 +487,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         )
       }
 
+      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 2
       if (attendMonCoup) {
         val av = occAvant
-        if (av != null && actuel < Partie.ecart(r.obs, av)) attendMonCoup = false // il a joué son coup
+        // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
+        // ou bien on reconnaît déjà le coup de l'adversaire (donc il a forcément joué le sien)
+        if (plausible || (av != null && actuel < Partie.ecart(r.obs, av))) attendMonCoup = false
       }
-      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 2
       if (!plausible) {
         coupEnAttente = null
         if (attendMonCoup) {
@@ -500,16 +502,19 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           val eAv = if (av != null) Partie.ecart(r.obs, av) else 99
           if (eAv > 3 && actuel > 3) {
             attenteVaine++
-            if (attenteVaine >= 4 && resynchroniser(r.obs, choix.brut, meilleur.ecart)) {
-              attenteVaine = 0
+            if (attenteVaine >= 3) {
+              // la photo ne ressemble ni à avant ni à maintenant : les deux ont dû jouer, on relit normalement
               attendMonCoup = false
-              return
+              attenteVaine = 0
             }
           } else {
             attenteVaine = 0
           }
-          statut("J'attends que tu joues ton coup.")
-          return
+          if (attendMonCoup) {
+            statut("J'attends que tu joues ton coup.")
+            verifDemandeeA = SystemClock.elapsedRealtime() + 2500
+            return
+          }
         }
         if (actuel >= 4) {
           incertain++
