@@ -1,0 +1,63 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:mergeDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:javaPreCompileDebug
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:compressDebugAssets
+> Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugJniLibFolders
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeLibDexDebug
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:processDebugResources
+> Task :app:mergeDebugNativeLibs
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libairbridge_jni.so, libairshield_light_mbed_jni.so, libairship_multiscope_jni.so, libandroidx.graphics.path.so, libc++_shared.so, libdatax_jni_local.so, libfb.so, libfbjni.so, libfbjni_kt.so, libfbsofterror.so, libfmt.so, libglog.so, libimage_processing_util_jni.so, libmanifest_jni.so, libonnxruntime.so, libonnxruntime4j_jni.so, libstockfish.so, libsurface_util_jni.so, libwearable_qpl3p.so, libxplat_mobilenetwork_third-party_mbedtls3_cryptoAndroid.so, libxplat_perflogger_base_baseAndroid.so, libxplat_perflogger_base_qpl_codegen_metadataAndroid.so, libxplat_perflogger_conversions_conversionsAndroid.so, libxplat_perflogger_health_counters_health_countersAndroid.so, libxplat_perflogger_perfloggerAndroid.so, libxplat_perflogger_safe_rollout_qpl_safe_rolloutAndroid.so, libxplat_perflogger_structured_data_structured_dataAndroid.so, libxplat_perflogger_synchronization_synchronizationAndroid.so, libxplat_perflogger_utils_utilsAndroid.so, libxplat_wearable_3p_qpl_3PQPL.so. Run with --info option to learn more.
+
+> Task :app:mergeExtDexDebug
+
+> Task :app:compileDebugKotlin FAILED
+e: file:///home/runner/work/echecs-lunettes/echecs-lunettes/app/src/main/java/fr/echecs/lunettes/Jeu.kt:636:9 Conflicting declarations:
+local val plateau: Array<DoubleArray>?
+local val plateau: CharArray?
+e: file:///home/runner/work/echecs-lunettes/echecs-lunettes/app/src/main/java/fr/echecs/lunettes/Jeu.kt:736:9 Conflicting declarations:
+local val plateau: Array<DoubleArray>?
+local val plateau: CharArray?
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792515600999.json
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 41s
+28 actionable tasks: 28 executed
