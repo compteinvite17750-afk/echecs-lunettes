@@ -90,6 +90,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   // photos gardées pour réentraîner la reconnaissance (dossier Téléchargements/echecs-photos)
   private var dernierEnreg = 0L
   private var dernierePropA = 0L
+  private var petitEcart = 0
   private var nbEnreg = -1
 
   /** Garde une image où la position lue colle avec la partie suivie, avec la position exacte et les coins du plateau. */
@@ -589,6 +590,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             return
           }
         }
+        if (actuel - extras >= 2) petitEcart++ else petitEcart = 0
         if (actuel - extras >= 4) {
           incertain++
           if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
@@ -603,6 +605,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien dans leur case.")
           if (incertain == 10) parle("Tape le coup de l'adversaire dans la case en bas de l'écran.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 800
+        } else if (petitEcart >= 6 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
+          // la photo ne change plus mais ne colle pas tout à fait avec la partie : je cherche ce qui s'est passé
+          petitEcart = 0
+          incertain = 0
         } else {
           incertain = 0
           statut("Pas de nouveau coup. J'attends l'adversaire.")
@@ -611,6 +617,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       attendMonCoup = false
       incertain = 0
+      petitEcart = 0
       coinsSauves = rc.coins
       rotMem = choix.rot
       val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
