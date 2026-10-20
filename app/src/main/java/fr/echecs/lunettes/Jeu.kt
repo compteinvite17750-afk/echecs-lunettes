@@ -71,7 +71,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   companion object {
     private const val TAG = "EchecsLunettes"
     private const val MOUVEMENT = 6f // différence moyenne (0-255) au-dessus de laquelle "ça bouge"
-    private const val CALME_MS = 1200L // temps sans mouvement avant de prendre la photo
+    private const val CALME_MS = 700L // temps sans mouvement avant de prendre la photo
     private const val VERIF_MS = 20000L // nouvelle vérification de temps en temps, même sans mouvement
     private const val TEMPS_MOTEUR = 700
   }
@@ -129,6 +129,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private val occupe = AtomicBoolean(false)
   private var coupEnAttente: String? = null
   private var incertain = 0
+  private var attendMonCoup = false
+  private var occAvant: IntArray? = null
+  private var attenteVaine = 0
 
   init {
     charger()
@@ -286,6 +289,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         repeat(n) { coups.removeAt(coups.size - 1) }
         sauver()
         coupEnAttente = null
+        attendMonCoup = false
         parle("Coup annulé. Remets les pièces comme avant le coup de l'adversaire.")
         statut("Dernier coup adverse annulé.")
       }
@@ -343,6 +347,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val b = Partie.depuisFen(m.etat(pos)[0])
     val phrase = Partie.decrire(b, coup)
     val dite = Partie.dire(b, coup)
+    occAvant = Partie.occupation(b)
+    attendMonCoup = true
+    attenteVaine = 0
     coups.add(coup)
     sauver()
     val pos2 = position()
@@ -454,9 +461,30 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         )
       }
 
-      val plausible = meilleur.ecart <= actuel - 2 && marge >= 1 && meilleur.ecart <= 14
+      if (attendMonCoup) {
+        val av = occAvant
+        if (av != null && actuel < Partie.ecart(r.obs, av)) attendMonCoup = false // il a joué son coup
+      }
+      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 2
       if (!plausible) {
         coupEnAttente = null
+        if (attendMonCoup) {
+          // On attend que le joueur joue son coup : on ne se plaint pas pendant qu'il joue.
+          val av = occAvant
+          val eAv = if (av != null) Partie.ecart(r.obs, av) else 99
+          if (eAv > 3 && actuel > 3) {
+            attenteVaine++
+            if (attenteVaine >= 4 && resynchroniser(r.obs, choix.brut, meilleur.ecart)) {
+              attenteVaine = 0
+              attendMonCoup = false
+              return
+            }
+          } else {
+            attenteVaine = 0
+          }
+          statut("J'attends que tu joues ton coup.")
+          return
+        }
         if (actuel >= 4) {
           incertain++
           if (incertain >= 2 && resynchroniser(r.obs, choix.brut, meilleur.ecart)) {
@@ -464,7 +492,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             return
           }
           statut("Je ne reconnais pas le coup (essai $incertain).")
-          if (incertain == 3) parle("Je n'arrive pas à lire le coup. Regarde bien l'échiquier.")
+          if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien au milieu des cases.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 1500
         } else {
           incertain = 0
@@ -472,6 +500,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         }
         return
       }
+      attendMonCoup = false
       incertain = 0
       coinsSauves = rc.coins
       rotMem = choix.rot
@@ -531,6 +560,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     coups.addAll(avant)
     coups.add(seq[0])
     coupEnAttente = null
+    attendMonCoup = false
     if (seq.size == 1) {
       sauver()
       majPartie()
@@ -654,18 +684,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       dernierMouvement = maintenant
     }
     val calme = maintenant - dernierMouvement > CALME_MS
-    // Téléphone tenu à la main : l'image bouge toujours, donc on regarde l'échiquier
-    // toutes les 4 secondes sans attendre le calme.
-    if (telephone && !occupe.get() && maintenant - derniereCapture > 1200 && partieEnCours()) {
-      aBouge = false
-      verifDemandeeA = 0
-      capturer()
-      return
-    }
-    if (!calme || occupe.get()) return
+    if (occupe.get()) return
     val verif = verifDemandeeA in 1..maintenant
-    val periodique = maintenant - derniereCapture > VERIF_MS
-    if ((aBouge || verif || periodique) && partieEnCours()) {
+    val periodique = maintenant - derniereCapture > (if (telephone) 6000L else VERIF_MS)
+    // Téléphone tenu à la main : l'image ne se calme jamais, on regarde quand même de temps en temps.
+    val force = telephone && !calme && maintenant - derniereCapture > 10000L
+    if (((calme && (aBouge || verif || periodique)) || force) && partieEnCours()) {
       aBouge = false
       verifDemandeeA = 0
       capturer()

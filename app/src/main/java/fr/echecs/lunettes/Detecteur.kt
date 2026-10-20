@@ -132,7 +132,8 @@ class Detecteur(modele: ByteArray) {
       for (p in pts) {
         val uv = Coins.applique(h, p.x, p.y)
         if (uv[2] <= 0) continue
-        if (uv[0] < -0.5 || uv[0] > 8.5 || uv[1] < -0.5 || uv[1] > 8.5) continue
+        // les pièces posées à côté de l'échiquier (pièces prises) ne comptent pas
+        if (uv[0] < -0.3 || uv[0] > 8.3 || uv[1] < -0.3 || uv[1] > 8.3) continue
         val col = floor(uv[0]).toInt().coerceIn(0, 7)
         val row = floor(uv[1]).toInt().coerceIn(0, 7)
         dets.add(Det(row * 8 + col, p.lum))
