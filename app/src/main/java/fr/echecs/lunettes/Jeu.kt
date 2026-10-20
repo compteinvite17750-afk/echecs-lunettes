@@ -1,10 +1,12 @@
 package fr.echecs.lunettes
 
 import android.app.Application
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.OrientationEventListener
@@ -84,6 +86,41 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var moi = 'w'
   private var coinsSauves: Array<DoubleArray>? = null
   private var rotMem = 0
+
+  // photos gardées pour réentraîner la reconnaissance (dossier Téléchargements/echecs-photos)
+  private var dernierEnreg = 0L
+  private var nbEnreg = -1
+
+  /** Garde une image où la position lue colle avec la partie suivie, avec la position exacte et les coins du plateau. */
+  private fun enregistrer(img: Bitmap, fen: String, coins: Array<DoubleArray>) {
+    try {
+      val now = SystemClock.elapsedRealtime()
+      if (now - dernierEnreg < 4000) return
+      if (nbEnreg < 0) nbEnreg = prefs.getInt("nb_enreg", 0)
+      if (nbEnreg >= 400) return
+      dernierEnreg = now
+      val res = getApplication<Application>().contentResolver
+      val nom = "p" + System.currentTimeMillis()
+      val cvImg = ContentValues()
+      cvImg.put(MediaStore.MediaColumns.DISPLAY_NAME, "$nom.jpg")
+      cvImg.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+      cvImg.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
+      val uriImg = res.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cvImg) ?: return
+      res.openOutputStream(uriImg)?.use { img.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+      val cvTxt = ContentValues()
+      cvTxt.put(MediaStore.MediaColumns.DISPLAY_NAME, "$nom.txt")
+      cvTxt.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+      cvTxt.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
+      val uriTxt = res.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cvTxt) ?: return
+      val pts = coins.joinToString(" ") { "" + Math.round(it[0]) + "," + Math.round(it[1]) }
+      val texte = fen + "\n" + moi + "\n" + pts + "\n"
+      res.openOutputStream(uriTxt)?.use { it.write(texte.toByteArray()) }
+      nbEnreg++
+      prefs.edit().putInt("nb_enreg", nbEnreg).apply()
+    } catch (e: Exception) {
+      Log.w("Jeu", "enregistrement impossible : " + e.message)
+    }
+  }
   private var baseFen: String? = null // position de départ si la partie a été reprise en cours de route
   private var partieActive = false // true quand l'application suit une partie
   private var autoReprise = true // false après une fin de partie, jusqu'à ce qu'on revoie une position de départ
@@ -494,6 +531,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // de la même façon, donc on les met de côté pour juger si une lecture est crédible
       val attendues = b.count { it != '.' }
       val extras = maxOf(0, choix.vue.nbPieces() - attendues)
+      if (actuel - extras <= 1) enregistrer(imgOk, e[0], px)
       _etat.update {
         it.copy(
             image = Detecteur.dessine(imgOk, px, r.obs),
