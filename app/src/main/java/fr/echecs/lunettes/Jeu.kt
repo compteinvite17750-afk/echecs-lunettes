@@ -446,8 +446,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       candidats.add(Partie.occupation(b))
       for (m1 in legaux) candidats.add(Partie.occupation(Partie.apres(b, m1)))
       val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
-      val plateau = trouverPlateau(img, det)
-      if (plateau == null) {
+      val plateauImg = trouverPlateau(img, det)
+      if (plateauImg == null) {
         _etat.update { it.copy(image = Detecteur.dessine(img, null, null)) }
         statut("Je cherche l'échiquier…")
         return
@@ -456,7 +456,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         // l'image reste droite (les pièces doivent être debout pour être reconnues) : c'est le plateau qu'on
         // tourne, en décalant les coins d'un cran (4 orientations possibles du plateau)
         val im = img
-        val rc1 = coinsPour(plateau, img, rot)
+        val rc1 = coinsPour(plateauImg, img, rot)
         var px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
         if (moi == 'b') px1 = arrayOf(px1[2], px1[3], px1[0], px1[1])
         val r0 = det.detecte(im, px1) ?: continue
@@ -633,14 +633,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val candDepart = listOf(occDepart, occDepartInv)
     val cas = ArrayList<Cas>()
     val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
-    val plateau = trouverPlateau(img, det)
-    if (plateau == null) {
+    val plateauImg = trouverPlateau(img, det)
+    if (plateauImg == null) {
       statut("Je cherche l'échiquier…")
       return
     }
     for (rot in ordre) {
       val im = img
-      val rc1 = coinsPour(plateau, img, rot)
+      val rc1 = coinsPour(plateauImg, img, rot)
       val px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * im.width, rc1.coins[it][1] * im.height) }
       val r0 = det.detecte(im, px1) ?: continue
       val pxR = Detecteur.raffine(r0.pts, px1, candDepart)
