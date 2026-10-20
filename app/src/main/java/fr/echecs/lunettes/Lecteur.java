@@ -266,7 +266,7 @@ public final class Lecteur {
             for (int g : gardes) {
                 boolean cG = lums[g] > seuil;
                 double du = u[idx] - u[g], dv = v[idx] - v[g];
-                if (cI == cG && du * du + dv * dv < 0.35 * 0.35) { dbl = true; break; }
+                if (cI == cG && du * du + dv * dv < 0.5 * 0.5) { dbl = true; break; }
             }
             if (!dbl) gardes.add(idx);
         }
@@ -308,7 +308,7 @@ public final class Lecteur {
             return c != 0 ? c : Double.compare(cout.get(x)[1], cout.get(y)[1]);
         });
         List<Partie.Note> r = new ArrayList<>();
-        for (int i : ordre) r.add(new Partie.Note((int) Math.round(cout.get(i)[0]), coups.get(i)));
+        for (int i : ordre) r.add(new Partie.Note((int) Math.round(cout.get(i)[0]), coups.get(i), cout.get(i)[0] + cout.get(i)[1]));
         return r;
     }
 }

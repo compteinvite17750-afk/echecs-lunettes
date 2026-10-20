@@ -75,7 +75,10 @@ public final class Partie {
     public static final class Note {
         public final int ecart;
         public final String coup;
-        Note(int e, String c) { ecart = e; coup = c; }
+        /** Même chose sans arrondi, distances comprises : sert à départager deux coups proches. */
+        public final double fin;
+        Note(int e, String c) { ecart = e; coup = c; fin = e; }
+        Note(int e, String c, double f) { ecart = e; coup = c; fin = f; }
     }
 
     /** Coups légaux classés du plus probable au moins probable. */
@@ -92,6 +95,15 @@ public final class Partie {
         String a = notes.get(0).coup.substring(0, 4);
         for (int i = 1; i < notes.size(); i++)
             if (!notes.get(i).coup.substring(0, 4).equals(a)) return notes.get(i).ecart - notes.get(0).ecart;
+        return 99;
+    }
+
+    /** Comme marge, mais sans arrondi (écart fin entre le meilleur coup et le meilleur coup différent). */
+    public static double margeFine(List<Note> notes) {
+        if (notes.isEmpty()) return 0;
+        String a = notes.get(0).coup.substring(0, 4);
+        for (int i = 1; i < notes.size(); i++)
+            if (!notes.get(i).coup.substring(0, 4).equals(a)) return notes.get(i).fin - notes.get(0).fin;
         return 99;
     }
 

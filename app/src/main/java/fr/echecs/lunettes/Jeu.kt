@@ -484,16 +484,19 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val imgOk = choix.im
       val meilleur = notes[0]
       val marge = Partie.marge(notes)
+      val margeF = Partie.margeFine(notes)
       _etat.update {
         it.copy(
             image = Detecteur.dessine(imgOk, px, r.obs),
             details =
                 "pièces vues ${r.nbPieces} · écart actuel $actuel · meilleur ${meilleur.coup} (${meilleur.ecart})" +
-                    " · marge $marge · plateau %.2f · rotation ${choix.rot}".format(rc.score),
+                    " · marge $marge (fine %.1f) · plateau %.2f · rotation ${choix.rot}".format(margeF, rc.score),
         )
       }
 
-      val plausible = meilleur.ecart <= 4 && marge >= 2 && actuel - meilleur.ecart >= 1
+      // marge d'un seul cran : acceptée si l'écart fin est net ; le coup est alors confirmé par une 2e photo
+      val plausible =
+          meilleur.ecart <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && actuel - meilleur.ecart >= 1
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
