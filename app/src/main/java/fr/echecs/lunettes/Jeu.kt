@@ -457,8 +457,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         // recalage fin des coins grâce aux pièces (la position attendue est connue)
         px1 = Detecteur.raffine(r0.pts, px1, candidats)
         val r1 = Detecteur.Resultat(Detecteur.observer(r0.pts, px1) ?: r0.obs, r0.nbPieces, r0.pts)
-        val act1 = Partie.ecart(r1.obs, Partie.occupation(b))
-        val notes1 = Partie.classe(b, legaux, r1.obs)
+        val vue1 = Detecteur.vue(r0.pts, px1)
+        val act1 = vue1.ecart(Partie.occupation(b))
+        val notes1 = Lecteur.classeSouple(vue1, b, legaux)
         val q = minOf(act1, notes1[0].ecart)
         if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q, r0.obs)
         if (q <= 6) break
@@ -521,7 +522,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             return
           }
           statut("Je ne reconnais pas le coup (essai $incertain).")
-          if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien au milieu des cases.")
+          if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien dans leur case.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 1500
         } else {
           incertain = 0

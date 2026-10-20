@@ -141,6 +141,16 @@ class Detecteur(modele: ByteArray) {
       )
     }
 
+    /** Lecture "souple" : chaque pièce est rattachée à la case attendue la plus proche. */
+    fun vue(pts: List<Pt>, coinsPx: Array<DoubleArray>): Lecteur.Vue =
+        Lecteur.vue(
+            coinsPx,
+            DoubleArray(pts.size) { pts[it].x },
+            DoubleArray(pts.size) { pts[it].y },
+            DoubleArray(pts.size) { pts[it].lum },
+            DoubleArray(pts.size) { pts[it].conf },
+        )
+
     /** Position complète lue (lettres FEN, majuscule = blanc), vue depuis la caméra. */
     fun lire(pts: List<Pt>, coinsPx: Array<DoubleArray>): CharArray =
         Lecteur.lire(

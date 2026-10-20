@@ -1,6 +1,8 @@
 package fr.echecs.lunettes;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /** Lecture de l'échiquier à partir des pièces détectées (logique pure, sans Android). */
 public final class Lecteur {
@@ -158,5 +160,118 @@ public final class Lecteur {
     /** Position lue -> board standard (blancs en bas), et true si il a fallu retourner (je joue les noirs). */
     public static boolean orienteNoirs(char[] lu) {
         return scoreOrientation(tourne180(lu)) > scoreOrientation(lu);
+    }
+
+    // ------------------------------------------------------------------
+    // Comparaison "souple" : une pièce posée près d'une ligne entre deux cases
+    // est rattachée à la case attendue la plus proche, pas à une case choisie d'avance.
+    // ------------------------------------------------------------------
+    static final double RAYON = 0.7; // distance maximale (en cases) entre une pièce vue et sa case
+
+    public static final class Vue {
+        final double[] u, v;
+        final int[] col; // 1 blanc, 2 noir
+        final int n;
+
+        Vue(double[] u, double[] v, int[] col, int n) { this.u = u; this.v = v; this.col = col; this.n = n; }
+
+        public int nbPieces() { return n; }
+
+        /** {nombre d'erreurs, somme des distances} entre ce qu'on voit et une position attendue (occupation 0/1/2). */
+        double[] compare(int[] attendu) {
+            int nAtt = 0;
+            for (int s = 0; s < 64; s++) if (attendu[s] != 0) nAtt++;
+            List<double[]> paires = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                for (int s = 0; s < 64; s++) {
+                    if (attendu[s] != col[i]) continue;
+                    double du = u[i] - (s % 8 + 0.5), dv = v[i] - (s / 8 + 0.5);
+                    double d = Math.sqrt(du * du + dv * dv);
+                    if (d <= RAYON) paires.add(new double[]{d, i, s});
+                }
+            }
+            paires.sort((a, b) -> Double.compare(a[0], b[0]));
+            boolean[] pris = new boolean[n];
+            boolean[] occupee = new boolean[64];
+            int nb = 0;
+            double somme = 0;
+            for (double[] p : paires) {
+                int i = (int) p[1], s = (int) p[2];
+                if (pris[i] || occupee[s]) continue;
+                pris[i] = true;
+                occupee[s] = true;
+                nb++;
+                somme += p[0];
+            }
+            return new double[]{(n - nb) + (nAtt - nb), somme};
+        }
+
+        public int ecart(int[] attendu) { return (int) compare(attendu)[0]; }
+    }
+
+    /** Pièces vues, placées en cases (coordonnées du plateau). Les doublons (même pièce vue deux fois) sont retirés. */
+    public static Vue vue(double[][] coins, double[] xs, double[] ys, double[] lums, double[] conf) {
+        double[] h = Coins.homographie(coins, Coins.SQ);
+        int n = xs.length;
+        double[] u = new double[n], v = new double[n], l = new double[n];
+        boolean[] ok = new boolean[n];
+        int k = 0;
+        if (h != null) {
+            for (int i = 0; i < n; i++) {
+                double[] uv = Coins.applique(h, xs[i], ys[i]);
+                if (uv[2] <= 0) continue;
+                if (uv[0] < -0.3 || uv[0] > 8.3 || uv[1] < -0.3 || uv[1] > 8.3) continue;
+                ok[i] = true;
+                u[i] = uv[0];
+                v[i] = uv[1];
+                l[k++] = lums[i];
+            }
+        }
+        double seuil = seuil(Arrays.copyOf(l, k));
+        // doublons : on garde la détection la plus sûre
+        Integer[] ordre = new Integer[n];
+        for (int i = 0; i < n; i++) ordre[i] = i;
+        Arrays.sort(ordre, (a, b) -> Double.compare(conf[b], conf[a]));
+        List<Integer> gardes = new ArrayList<>();
+        for (int idx : ordre) {
+            if (!ok[idx]) continue;
+            boolean dbl = false;
+            boolean cI = lums[idx] > seuil;
+            for (int g : gardes) {
+                boolean cG = lums[g] > seuil;
+                double du = u[idx] - u[g], dv = v[idx] - v[g];
+                if (cI == cG && du * du + dv * dv < 0.35 * 0.35) { dbl = true; break; }
+            }
+            if (!dbl) gardes.add(idx);
+        }
+        int m = gardes.size();
+        double[] uu = new double[m], vv = new double[m];
+        int[] cc = new int[m];
+        for (int j = 0; j < m; j++) {
+            int g = gardes.get(j);
+            uu[j] = u[g];
+            vv[j] = v[g];
+            cc[j] = lums[g] > seuil ? 1 : 2;
+        }
+        return new Vue(uu, vv, cc, m);
+    }
+
+    /** Coups légaux classés du plus au moins probable d'après ce qu'on voit (comparaison souple). */
+    public static List<Partie.Note> classeSouple(Vue vue, char[] b, List<String> legaux) {
+        List<double[]> cout = new ArrayList<>();
+        List<String> coups = new ArrayList<>();
+        for (String m : legaux) {
+            cout.add(vue.compare(Partie.occupation(Partie.apres(b, m))));
+            coups.add(m);
+        }
+        Integer[] ordre = new Integer[coups.size()];
+        for (int i = 0; i < ordre.length; i++) ordre[i] = i;
+        Arrays.sort(ordre, (x, y) -> {
+            int c = Double.compare(cout.get(x)[0], cout.get(y)[0]);
+            return c != 0 ? c : Double.compare(cout.get(x)[1], cout.get(y)[1]);
+        });
+        List<Partie.Note> r = new ArrayList<>();
+        for (int i : ordre) r.add(new Partie.Note((int) cout.get(i)[0], coups.get(i)));
+        return r;
     }
 }
