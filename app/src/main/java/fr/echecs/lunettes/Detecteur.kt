@@ -148,6 +148,7 @@ class Detecteur(modele: ByteArray) {
             DoubleArray(pts.size) { pts[it].x },
             DoubleArray(pts.size) { pts[it].y },
             DoubleArray(pts.size) { pts[it].lum },
+            IntArray(pts.size) { pts[it].cls },
             DoubleArray(pts.size) { pts[it].conf },
         )
 

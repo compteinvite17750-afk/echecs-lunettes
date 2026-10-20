@@ -171,46 +171,55 @@ public final class Lecteur {
     public static final class Vue {
         final double[] u, v;
         final int[] col; // 1 blanc, 2 noir
+        final char[] typ; // b k n p q r
         final int n;
 
-        Vue(double[] u, double[] v, int[] col, int n) { this.u = u; this.v = v; this.col = col; this.n = n; }
+        Vue(double[] u, double[] v, int[] col, char[] typ, int n) {
+            this.u = u; this.v = v; this.col = col; this.typ = typ; this.n = n;
+        }
 
         public int nbPieces() { return n; }
 
-        /** {nombre d'erreurs, somme des distances} entre ce qu'on voit et une position attendue (occupation 0/1/2). */
-        double[] compare(int[] attendu) {
+        /** {erreurs, somme des distances} entre ce qu'on voit et une position attendue (lettres FEN). */
+        double[] compare(char[] att) {
             int nAtt = 0;
-            for (int s = 0; s < 64; s++) if (attendu[s] != 0) nAtt++;
+            for (int s = 0; s < 64; s++) if (att[s] != '.') nAtt++;
             List<double[]> paires = new ArrayList<>();
             for (int i = 0; i < n; i++) {
                 for (int s = 0; s < 64; s++) {
-                    if (attendu[s] != col[i]) continue;
+                    char a = att[s];
+                    if (a == '.') continue;
+                    int c = Character.isUpperCase(a) ? 1 : 2;
+                    if (c != col[i]) continue;
                     double du = u[i] - (s % 8 + 0.5), dv = v[i] - (s / 8 + 0.5);
                     double d = Math.sqrt(du * du + dv * dv);
-                    if (d <= RAYON) paires.add(new double[]{d, i, s});
+                    if (d > RAYON) continue;
+                    double mal = Character.toLowerCase(a) == typ[i] ? 0 : 1;
+                    paires.add(new double[]{d + 0.4 * mal, i, s, mal, d});
                 }
             }
-            paires.sort((a, b) -> Double.compare(a[0], b[0]));
+            paires.sort((x, y) -> Double.compare(x[0], y[0]));
             boolean[] pris = new boolean[n];
             boolean[] occupee = new boolean[64];
             int nb = 0;
-            double somme = 0;
+            double somme = 0, mauvais = 0;
             for (double[] p : paires) {
                 int i = (int) p[1], s = (int) p[2];
                 if (pris[i] || occupee[s]) continue;
                 pris[i] = true;
                 occupee[s] = true;
                 nb++;
-                somme += p[0];
+                somme += p[4];
+                mauvais += p[3];
             }
-            return new double[]{(n - nb) + (nAtt - nb), somme};
+            return new double[]{(n - nb) + (nAtt - nb) + 0.5 * mauvais, somme};
         }
 
-        public int ecart(int[] attendu) { return (int) compare(attendu)[0]; }
+        public int ecart(char[] att) { return (int) Math.round(compare(att)[0]); }
     }
 
     /** Pièces vues, placées en cases (coordonnées du plateau). Les doublons (même pièce vue deux fois) sont retirés. */
-    public static Vue vue(double[][] coins, double[] xs, double[] ys, double[] lums, double[] conf) {
+    public static Vue vue(double[][] coins, double[] xs, double[] ys, double[] lums, int[] cls, double[] conf) {
         double[] h = Coins.homographie(coins, Coins.SQ);
         int n = xs.length;
         double[] u = new double[n], v = new double[n], l = new double[n];
@@ -228,7 +237,6 @@ public final class Lecteur {
             }
         }
         double seuil = seuil(Arrays.copyOf(l, k));
-        // doublons : on garde la détection la plus sûre
         Integer[] ordre = new Integer[n];
         for (int i = 0; i < n; i++) ordre[i] = i;
         Arrays.sort(ordre, (a, b) -> Double.compare(conf[b], conf[a]));
@@ -247,13 +255,15 @@ public final class Lecteur {
         int m = gardes.size();
         double[] uu = new double[m], vv = new double[m];
         int[] cc = new int[m];
+        char[] tt = new char[m];
         for (int j = 0; j < m; j++) {
             int g = gardes.get(j);
             uu[j] = u[g];
             vv[j] = v[g];
             cc[j] = lums[g] > seuil ? 1 : 2;
+            tt[j] = (cls[g] >= 0 && cls[g] <= 5) ? TYPES[cls[g]] : '?';
         }
-        return new Vue(uu, vv, cc, m);
+        return new Vue(uu, vv, cc, tt, m);
     }
 
     /** Coups légaux classés du plus au moins probable d'après ce qu'on voit (comparaison souple). */
@@ -261,7 +271,7 @@ public final class Lecteur {
         List<double[]> cout = new ArrayList<>();
         List<String> coups = new ArrayList<>();
         for (String m : legaux) {
-            cout.add(vue.compare(Partie.occupation(Partie.apres(b, m))));
+            cout.add(vue.compare(Partie.apres(b, m)));
             coups.add(m);
         }
         Integer[] ordre = new Integer[coups.size()];
@@ -271,7 +281,7 @@ public final class Lecteur {
             return c != 0 ? c : Double.compare(cout.get(x)[1], cout.get(y)[1]);
         });
         List<Partie.Note> r = new ArrayList<>();
-        for (int i : ordre) r.add(new Partie.Note((int) cout.get(i)[0], coups.get(i)));
+        for (int i : ordre) r.add(new Partie.Note((int) Math.round(cout.get(i)[0]), coups.get(i)));
         return r;
     }
 }

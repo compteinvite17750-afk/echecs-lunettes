@@ -458,7 +458,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         px1 = Detecteur.raffine(r0.pts, px1, candidats)
         val r1 = Detecteur.Resultat(Detecteur.observer(r0.pts, px1) ?: r0.obs, r0.nbPieces, r0.pts)
         val vue1 = Detecteur.vue(r0.pts, px1)
-        val act1 = vue1.ecart(Partie.occupation(b))
+        val act1 = vue1.ecart(b)
         val notes1 = Lecteur.classeSouple(vue1, b, legaux)
         val q = minOf(act1, notes1[0].ecart)
         if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q, r0.obs)
