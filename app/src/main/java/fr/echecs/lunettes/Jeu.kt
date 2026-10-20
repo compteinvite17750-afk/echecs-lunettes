@@ -71,7 +71,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   companion object {
     private const val TAG = "EchecsLunettes"
     private const val MOUVEMENT = 6f // différence moyenne (0-255) au-dessus de laquelle "ça bouge"
-    private const val CALME_MS = 700L // temps sans mouvement avant de prendre la photo
+    private const val CALME_MS = 450L // temps sans mouvement avant de prendre la photo
     private const val VERIF_MS = 20000L // nouvelle vérification de temps en temps, même sans mouvement
     private const val TEMPS_MOTEUR = 700
   }
@@ -99,6 +99,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val notes: List<Partie.Note>,
       val qualite: Int,
       val brut: IntArray,
+      val vue: Lecteur.Vue,
   )
 
   private var moteur: Moteur? = null
@@ -461,7 +462,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         val act1 = vue1.ecart(b)
         val notes1 = Lecteur.classeSouple(vue1, b, legaux)
         val q = minOf(act1, notes1[0].ecart)
-        if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q, r0.obs)
+        if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q, r0.obs, vue1)
         if (q <= 6) break
       }
       if (meil == null) {
@@ -512,23 +513,23 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           }
           if (attendMonCoup) {
             statut("J'attends que tu joues ton coup.")
-            verifDemandeeA = SystemClock.elapsedRealtime() + 2500
+            verifDemandeeA = SystemClock.elapsedRealtime() + 1200
             return
           }
         }
         if (actuel >= 4) {
           incertain++
-          if (incertain >= 2 && resynchroniser(r.obs, choix.brut, meilleur.ecart)) {
+          if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart)) {
             incertain = 0
             return
           }
-          if (incertain >= 5 && relireTout(choix)) {
+          if (incertain >= 4 && relireTout(choix, incertain >= 12)) {
             incertain = 0
             return
           }
           statut("Je ne reconnais pas le coup (essai $incertain).")
           if (incertain == 4) parle("Je ne comprends pas le coup de l'adversaire. Vérifie que ses pièces sont bien dans leur case.")
-          verifDemandeeA = SystemClock.elapsedRealtime() + 1500
+          verifDemandeeA = SystemClock.elapsedRealtime() + 800
         } else {
           incertain = 0
           statut("Pas de nouveau coup. J'attends l'adversaire.")
@@ -543,7 +544,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       if (!fort && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
-        verifDemandeeA = SystemClock.elapsedRealtime() + 1500
+        verifDemandeeA = SystemClock.elapsedRealtime() + 800
         return
       }
       coupEnAttente = null
@@ -688,9 +689,23 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   /** Quand le suivi est perdu : on relit tout l'échiquier pour se recaler. */
-  private fun relireTout(choix: Lecture): Boolean {
+  private fun relireTout(choix: Lecture, sansGarde: Boolean = false): Boolean {
     // les coins de la lecture sont déjà retournés quand je joue les noirs : le plateau est dans le bon sens
     val lu = Detecteur.lire(choix.r.pts, choix.px)
+    // Des pièces cachées derrière d'autres peuvent manquer à la lecture : on ne remplace pas une partie suivie
+    // par une lecture à qui il manque des pièces (sauf si on est perdu depuis longtemps).
+    val m = moteur
+    if (!sansGarde && m != null && (coups.isNotEmpty() || baseFen != null)) {
+      try {
+        val suivi = m.etat(position())[0].substringBefore(' ').count { it.isLetter() }
+        val vues = lu.count { it != '.' }
+        if (vues < suivi - 1) {
+          statut("Je ne vois pas toutes les pièces (certaines sont cachées). Je réessaie.")
+          return false
+        }
+      } catch (e: Exception) {
+      }
+    }
     return adopter(lu, moi, "Je me suis recalé sur l'échiquier. ")
   }
 
@@ -744,7 +759,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    * Le joueur a peut-être joué autre chose que le coup conseillé (et l'adversaire a peut-être déjà répondu).
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
    */
-  private fun resynchroniser(obs: IntArray, brut: IntArray, ecartNormal: Int): Boolean {
+  private fun resynchroniser(vue: Lecteur.Vue, ecartNormal: Int): Boolean {
     val m = moteur ?: return false
     if (coups.isEmpty()) return false
     val dernier = coups.last()
@@ -753,8 +768,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     class Cand(val ecart: Int, val seq: List<String>, val occ: IntArray)
     val cands = ArrayList<Cand>()
     fun note(b: CharArray, seq: List<String>) {
-      val occ = Partie.occupation(b)
-      cands.add(Cand(minOf(Partie.ecart(obs, occ), Partie.ecart(brut, occ)), seq, occ))
+      cands.add(Cand(vue.ecart(b), seq, Partie.occupation(b)))
     }
     for (alt in m.coupsLegaux(positionDe(avant))) {
       if (alt == dernier) continue
@@ -900,9 +914,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val calme = maintenant - dernierMouvement > CALME_MS
     if (occupe.get()) return
     val verif = verifDemandeeA in 1..maintenant
-    val periodique = maintenant - derniereCapture > (if (telephone) 6000L else VERIF_MS)
+    val periodique = maintenant - derniereCapture > (if (telephone) 2500L else VERIF_MS)
     // Téléphone tenu à la main : l'image ne se calme jamais, on regarde quand même de temps en temps.
-    val force = telephone && !calme && maintenant - derniereCapture > 10000L
+    val force = telephone && !calme && maintenant - derniereCapture > 4000L
     if (((calme && (aBouge || verif || periodique)) || force) && partieEnCours()) {
       aBouge = false
       verifDemandeeA = 0

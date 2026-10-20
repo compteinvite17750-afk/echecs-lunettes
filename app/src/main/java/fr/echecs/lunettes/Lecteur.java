@@ -173,9 +173,22 @@ public final class Lecteur {
         final int[] col; // 1 blanc, 2 noir
         final char[] typ; // b k n p q r
         final int n;
+        int axe = 1;        // axe (0 = u, 1 = v) le long duquel on se rapproche de la caméra
+        double signe = 1;   // sens (+1 / -1) vers la caméra le long de cet axe
 
         Vue(double[] u, double[] v, int[] col, char[] typ, int n) {
             this.u = u; this.v = v; this.col = col; this.typ = typ; this.n = n;
+        }
+
+        /** Une pièce attendue en s peut être cachée si une pièce vue se trouve juste devant elle (côté caméra). */
+        boolean cachee(int s) {
+            double cu = s % 8 + 0.5, cv = s / 8 + 0.5;
+            for (int i = 0; i < n; i++) {
+                double along = (axe == 0 ? u[i] - cu : v[i] - cv) * signe;
+                double perp = Math.abs(axe == 0 ? v[i] - cv : u[i] - cu);
+                if (along > 0.3 && along < 1.9 && perp < 0.75) return true;
+            }
+            return false;
         }
 
         public int nbPieces() { return n; }
@@ -212,7 +225,12 @@ public final class Lecteur {
                 somme += p[4];
                 mauvais += p[3];
             }
-            return new double[]{(n - nb) + (nAtt - nb) + 0.5 * mauvais, somme};
+            double manquantes = 0;
+            for (int s = 0; s < 64; s++) {
+                if (att[s] == '.' || occupee[s]) continue;
+                manquantes += cachee(s) ? 0.25 : 1.0; // une pièce cachée derrière une autre n'est pas une vraie erreur
+            }
+            return new double[]{(n - nb) + manquantes + 0.5 * mauvais, somme};
         }
 
         public int ecart(char[] att) { return (int) Math.round(compare(att)[0]); }
@@ -263,7 +281,16 @@ public final class Lecteur {
             cc[j] = lums[g] > seuil ? 1 : 2;
             tt[j] = (cls[g] >= 0 && cls[g] <= 5) ? TYPES[cls[g]] : '?';
         }
-        return new Vue(uu, vv, cc, tt, m);
+        Vue res = new Vue(uu, vv, cc, tt, m);
+        double[] hi = Coins.homographie(Coins.SQ, coins);
+        if (hi != null) {
+            double y0 = Coins.applique(hi, 4, 4)[1];
+            double dU = Coins.applique(hi, 5, 4)[1] - y0;
+            double dV = Coins.applique(hi, 4, 5)[1] - y0;
+            if (Math.abs(dU) > Math.abs(dV)) { res.axe = 0; res.signe = dU >= 0 ? 1 : -1; }
+            else { res.axe = 1; res.signe = dV >= 0 ? 1 : -1; }
+        }
+        return res;
     }
 
     /** Coups légaux classés du plus au moins probable d'après ce qu'on voit (comparaison souple). */
