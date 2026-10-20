@@ -193,6 +193,19 @@ public final class Lecteur {
 
         public int nbPieces() { return n; }
 
+        /** Couleur (1 blanc, 2 noir) de la pièce vue sur la case s (index FEN), 0 s'il n'y en a pas. */
+        public int occupant(int s) {
+            double cu = s % 8 + 0.5, cv = s / 8 + 0.5;
+            int res = 0;
+            double dmin = 0.4;
+            for (int i = 0; i < n; i++) {
+                double du = u[i] - cu, dv = v[i] - cv;
+                double d = Math.sqrt(du * du + dv * dv);
+                if (d < dmin) { dmin = d; res = col[i]; }
+            }
+            return res;
+        }
+
         /** {erreurs, somme des distances} entre ce qu'on voit et une position attendue (lettres FEN). */
         double[] compare(char[] att) {
             int nAtt = 0;

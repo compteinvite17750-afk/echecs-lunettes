@@ -91,6 +91,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var dernierEnreg = 0L
   private var dernierePropA = 0L
   private var petitEcart = 0
+  private var forceRelire = false
+  private var relectures = 0
   private var nbEnreg = -1
 
   /** Garde une image où la position lue colle avec la partie suivie, avec la position exacte et les coins du plateau. */
@@ -402,8 +404,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   /** Demande à Stockfish mon coup, l'annonce et l'ajoute à la partie. */
-  private fun proposer(prefixe: String, prefixeDit: String = "") {
-    val m = moteur ?: return
+  /** Donne mon coup. Renvoie false (sans rien annoncer) si ce coup est impossible d'après ce que la caméra voit. */
+  private fun proposer(prefixe: String, prefixeDit: String = "", vue: Lecteur.Vue? = null): Boolean {
+    val m = moteur ?: return true
     val pos = position()
     val legaux = m.coupsLegaux(pos)
     if (legaux.isEmpty()) {
@@ -412,10 +415,17 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       statut("Partie terminée.")
       partieActive = false
       autoReprise = false
-      return
+      return true
     }
-    val coup = m.meilleurCoup(pos, TEMPS_MOTEUR) ?: return
+    val coup = m.meilleurCoup(pos, TEMPS_MOTEUR) ?: return true
     val b = Partie.depuisFen(m.etat(pos)[0])
+    if (vue != null && coup.length >= 4) {
+      // ma pièce ne peut pas aller sur une case où la caméra voit déjà une de mes pièces : la position que j'ai en tête est fausse
+      val de = (8 - (coup[1] - '0')) * 8 + (coup[0] - 'a')
+      val vers = (8 - (coup[3] - '0')) * 8 + (coup[2] - 'a')
+      val couleur = if (Character.isUpperCase(b[de])) 1 else 2
+      if (vue.occupant(vers) == couleur) return false
+    }
     val phrase = Partie.decrire(b, coup)
     val dite = Partie.dire(b, coup)
     occAvant = Partie.occupation(b)
@@ -441,6 +451,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     parle("$prefixeDit$dite.$suite", "${prefixe}Joue : $phrase.$suite")
     statut("TON COUP : $phrase.$suite")
     majPartie()
+    return true
   }
 
   private fun partieEnCours(): Boolean {
@@ -544,6 +555,21 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // de la même façon, donc on les met de côté pour juger si une lecture est crédible
       val attendues = b.count { it != '.' }
       val extras = maxOf(0, choix.vue.nbPieces() - attendues)
+      if (forceRelire) {
+        relectures++
+        if (relectures > 14) {
+          forceRelire = false
+          relectures = 0
+        } else {
+          statut("Je relis l'échiquier pour me recaler…")
+          verifDemandeeA = SystemClock.elapsedRealtime() + 800
+          if (relireTout(choix, relectures >= 6)) {
+            forceRelire = false
+            relectures = 0
+          }
+          return
+        }
+      }
       if (actuel - extras <= 1) enregistrer(imgOk, e[0], px)
       _etat.update {
         it.copy(
@@ -631,7 +657,17 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val phrase = Partie.decrire(b, meilleur.coup)
       coups.add(meilleur.coup)
       sauver()
-      proposer("Adversaire : $phrase. ")
+      if (!proposer("Adversaire : $phrase. ", "", choix.vue)) {
+        // le coup que je voulais te donner est impossible sur l'échiquier réel : je me suis trompé plus tôt
+        coups.removeAt(coups.size - 1)
+        sauver()
+        majPartie()
+        forceRelire = true
+        relectures = 0
+        parle("Je ne suis plus sûr de la position. Je relis l'échiquier. Ne touche à rien.")
+        statut("Je relis l'échiquier pour me recaler…")
+        verifDemandeeA = SystemClock.elapsedRealtime() + 800
+      }
     } catch (ex: Exception) {
       Log.e(TAG, "analyse", ex)
       statut("ERREUR analyse : ${ex.message}")
