@@ -94,6 +94,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val actuel: Int,
       val notes: List<Partie.Note>,
       val qualite: Int,
+      val brut: IntArray,
   )
 
   private var moteur: Moteur? = null
@@ -328,7 +329,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   /** Demande à Stockfish mon coup, l'annonce et l'ajoute à la partie. */
-  private fun proposer(prefixe: String, prefixeDit: String = prefixe) {
+  private fun proposer(prefixe: String, prefixeDit: String = "") {
     val m = moteur ?: return
     val pos = position()
     val legaux = m.coupsLegaux(pos)
@@ -354,7 +355,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           echec -> " Échec."
           else -> ""
         }
-    parle("$dite.$suite", "${prefixe}Joue : $phrase.$suite")
+    parle("$prefixeDit$dite.$suite", "${prefixe}Joue : $phrase.$suite")
     statut("TON COUP : $phrase.$suite")
     majPartie()
   }
@@ -427,7 +428,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         val act1 = Partie.ecart(r1.obs, Partie.occupation(b))
         val notes1 = Partie.classe(b, legaux, r1.obs)
         val q = minOf(act1, notes1[0].ecart)
-        if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q)
+        if (meil == null || q < meil.qualite) meil = Lecture(rot, im, px1, rc1, r1, act1, notes1, q, r0.obs)
         if (q <= 6) break
       }
       if (meil == null) {
@@ -458,6 +459,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         coupEnAttente = null
         if (actuel >= 4) {
           incertain++
+          if (incertain >= 2 && resynchroniser(r.obs, choix.brut, meilleur.ecart)) {
+            incertain = 0
+            return
+          }
           statut("Je ne reconnais pas le coup (essai $incertain).")
           if (incertain == 3) parle("Je n'arrive pas à lire le coup. Regarde bien l'échiquier.")
           verifDemandeeA = SystemClock.elapsedRealtime() + 1500
@@ -488,6 +493,57 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     } finally {
       _etat.update { it.copy(enAnalyse = false) }
     }
+  }
+
+  /**
+   * Le joueur a peut-être joué autre chose que le coup conseillé (et l'adversaire a peut-être déjà répondu).
+   * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
+   */
+  private fun resynchroniser(obs: IntArray, brut: IntArray, ecartNormal: Int): Boolean {
+    val m = moteur ?: return false
+    if (coups.isEmpty()) return false
+    val dernier = coups.last()
+    val avant = ArrayList<String>(coups.subList(0, coups.size - 1))
+    fun posDe(l: List<String>) =
+        if (l.isEmpty()) "position startpos" else "position startpos moves " + l.joinToString(" ")
+    val bAvant = Partie.depuisFen(m.etat(posDe(avant))[0])
+    class Cand(val ecart: Int, val seq: List<String>, val occ: IntArray)
+    val cands = ArrayList<Cand>()
+    fun note(b: CharArray, seq: List<String>) {
+      val occ = Partie.occupation(b)
+      cands.add(Cand(minOf(Partie.ecart(obs, occ), Partie.ecart(brut, occ)), seq, occ))
+    }
+    for (alt in m.coupsLegaux(posDe(avant))) {
+      if (alt == dernier) continue
+      val bAlt = Partie.apres(bAvant, alt)
+      note(bAlt, listOf(alt))
+      for (rep in m.coupsLegaux(posDe(avant + alt))) note(Partie.apres(bAlt, rep), listOf(alt, rep))
+    }
+    cands.sortBy { it.ecart }
+    val best = cands.firstOrNull() ?: return false
+    val autre = cands.firstOrNull { !it.occ.contentEquals(best.occ) }
+    val marge = (autre?.ecart ?: 99) - best.ecart
+    if (best.ecart > 2 || marge < 2 || best.ecart >= ecartNormal) return false
+
+    val seq = best.seq
+    val phraseMoi = Partie.decrire(bAvant, seq[0])
+    coups.clear()
+    coups.addAll(avant)
+    coups.add(seq[0])
+    coupEnAttente = null
+    if (seq.size == 1) {
+      sauver()
+      majPartie()
+      statut("Tu as joué : $phraseMoi. J'attends l'adversaire.")
+      parle("Tu n'as pas joué le coup prévu. Je m'adapte. J'attends l'adversaire.")
+      return true
+    }
+    val bAlt = Partie.apres(bAvant, seq[0])
+    val phraseOpp = Partie.decrire(bAlt, seq[1])
+    coups.add(seq[1])
+    sauver()
+    proposer("Tu as joué : $phraseMoi. Adversaire : $phraseOpp. ", "Je m'adapte. | ")
+    return true
   }
 
   // ---------------- lunettes ----------------
