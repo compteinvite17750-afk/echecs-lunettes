@@ -73,7 +73,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     private const val MOUVEMENT = 6f // différence moyenne (0-255) au-dessus de laquelle "ça bouge"
     private const val CALME_MS = 1200L // temps sans mouvement avant de prendre la photo
     private const val VERIF_MS = 20000L // nouvelle vérification de temps en temps, même sans mouvement
-    private const val TEMPS_MOTEUR = 1500
+    private const val TEMPS_MOTEUR = 700
   }
 
   private val _etat = MutableStateFlow(EcranEtat())
@@ -159,6 +159,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun charger() {
     coups = ArrayList(prefs.getString("coups", "")!!.split(" ").filter { it.isNotBlank() })
     moi = prefs.getString("moi", "w")!![0]
+    Partie.style = prefs.getInt("style_cases", 0)
     coinsSauves =
         prefs.getString("coins", null)?.let { s ->
           val v = s.split(",").mapNotNull { it.toDoubleOrNull() }
@@ -303,12 +304,22 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       val b = Partie.depuisFen(m.etat(position())[0])
       val phrase = Partie.decrire(b, uci)
-      val dite = Partie.dire(b, uci)
       coups.add(uci)
       sauver()
-      proposer("Adversaire : $phrase. ", "L'adversaire a joué : $dite. | ")
+      proposer("Adversaire : $phrase. ")
       majPartie()
     }
+  }
+
+  /** Change la façon de dire les cases et fait entendre un exemple. */
+  fun changerStyle() {
+    val st = (Partie.style + 1) % 4
+    Partie.style = st
+    prefs.edit().putInt("style_cases", st).apply()
+    val b = Partie.depuisFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    val essai = Partie.dire(b, "e2e4") + ".|" + Partie.dire(b, "g1f3") + ".|" + Partie.dire(b, "f1b5") + "."
+    statut("Façon de dire les cases : n° ${st + 1} sur 4.")
+    parle(essai)
   }
 
   fun repeter() {
@@ -343,7 +354,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           echec -> " Échec."
           else -> ""
         }
-    parle("${prefixeDit}À toi de jouer : $dite.$suite", "${prefixe}Joue : $phrase.$suite")
+    parle("$dite.$suite", "${prefixe}Joue : $phrase.$suite")
     statut("TON COUP : $phrase.$suite")
     majPartie()
   }
@@ -459,7 +470,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       incertain = 0
       coinsSauves = rc.coins
       rotMem = choix.rot
-      val fort = marge >= 3 && actuel - meilleur.ecart >= 4
+      val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
       if (!fort && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
@@ -468,10 +479,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       coupEnAttente = null
       val phrase = Partie.decrire(b, meilleur.coup)
-      val dite = Partie.dire(b, meilleur.coup)
       coups.add(meilleur.coup)
       sauver()
-      proposer("Adversaire : $phrase. ", "L'adversaire a joué : $dite. | ")
+      proposer("Adversaire : $phrase. ")
     } catch (ex: Exception) {
       Log.e(TAG, "analyse", ex)
       statut("ERREUR analyse : ${ex.message}")
@@ -590,7 +600,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val calme = maintenant - dernierMouvement > CALME_MS
     // Téléphone tenu à la main : l'image bouge toujours, donc on regarde l'échiquier
     // toutes les 4 secondes sans attendre le calme.
-    if (telephone && !occupe.get() && maintenant - derniereCapture > 4000 && partieEnCours()) {
+    if (telephone && !occupe.get() && maintenant - derniereCapture > 1200 && partieEnCours()) {
       aBouge = false
       verifDemandeeA = 0
       capturer()
@@ -622,7 +632,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
                     .build()
             analyse.setAnalyzer(execAnalyse) { img -> analyserTel(img) }
             val photo =
-                ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build()
+                ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
             capturePhoto = photo
             // la photo suit la position réelle du téléphone (vertical ou horizontal)
             capteurOrientation?.disable()

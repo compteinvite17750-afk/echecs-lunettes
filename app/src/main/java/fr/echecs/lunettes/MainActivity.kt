@@ -196,6 +196,9 @@ fun Ecran(
       Button(onClick = { jeu.capturer() }) { Text("Analyser maintenant") }
       OutlinedButton(onClick = { jeu.repeter() }) { Text("Répéter") }
     }
+    OutlinedButton(onClick = { jeu.changerStyle() }, modifier = large) {
+      Text("Changer la façon de dire les cases")
+    }
     OutlinedButton(onClick = { jeu.annuler() }, modifier = large) {
       Text("Annuler le dernier coup adverse")
     }

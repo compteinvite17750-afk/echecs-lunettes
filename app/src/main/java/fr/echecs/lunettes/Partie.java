@@ -132,11 +132,22 @@ public final class Partie {
         return t.substring(0, 1).toUpperCase() + t.substring(1);
     }
 
-    /** Case prononcée clairement : « cé cinq ». */
+    /** Façon de prononcer les cases (0 à 3), au choix de l'utilisateur. */
+    public static int style = 0;
+
+    /** Case prononcée clairement, selon le style choisi. */
     static String caseParlee(int idx) {
-        String[] lettres = {"a", "bé", "cé", "dé", "eu", "èf", "gé", "ache"};
         String[] chiffres = {"un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit"};
-        return lettres[idx % 8] + " " + chiffres[7 - idx / 8];
+        int col = idx % 8, rang = 7 - idx / 8;
+        String maj = "" + (char) ('A' + col);
+        switch (style) {
+            case 1: return maj + " " + chiffres[rang];
+            case 2: return "colonne " + maj + ", ligne " + chiffres[rang];
+            case 3: return "" + (char) ('a' + col) + (rang + 1);
+            default:
+                String[] lettres = {"a", "bé", "cé", "dé", "euh", "effe", "gé", "hache"};
+                return lettres[col] + " " + chiffres[rang];
+        }
     }
 
     /** Phrase pour l'écran : « Le fou en c1, prend le pion en g5. » */
