@@ -18,6 +18,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import android.util.Size
@@ -541,6 +542,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         val octets =
             getApplication<Application>().contentResolver.openInputStream(uri)!!.use { it.readBytes() }
         val bmp = Detecteur.decode(octets)
+        idImg = -1L
         if (bmp == null) statut("Image illisible.") else analyser(bmp)
       } catch (e: Exception) {
         statut("ERREUR : ${e.message}")
@@ -557,8 +559,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     statut("Vidéo choisie, je démarre…")
     lectureVideo = true // la caméra en direct se met en pause pendant la vidéo
     viewModelScope.launch(Dispatchers.Default) {
-      val r = android.media.MediaMetadataRetriever()
+      val r = android.media.MediaMetadataRetriever() // grandes images pour l'analyse
+      val r2 = android.media.MediaMetadataRetriever() // petites images pour suivre le plateau
       var pris = false
+      val analyseOcc = AtomicBoolean(false)
       try {
         var attente = 0
         while (!occupe.compareAndSet(false, true)) {
@@ -580,28 +584,73 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         petitEcart = 0
         sauver()
         majPartie()
+        suivi.reset()
+        idImg = -1L
+        dernierAncrage = 0L
+        plateauSur = null
         r.setDataSource(getApplication<Application>(), uri)
+        r2.setDataSource(getApplication<Application>(), uri)
         val dureeMs = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION) ?: "0").toLong()
         if (dureeMs <= 0) {
           statut("Vidéo illisible.")
           return@launch
         }
         statut("Lecture de la vidéo (${dureeMs / 1000} s)…")
+        noter("VIDEO : lecture de ${dureeMs / 1000} s")
         val debut = SystemClock.elapsedRealtime()
+        var nbPetites = 0
         while (true) {
           val t = SystemClock.elapsedRealtime() - debut
           if (t >= dureeMs) break
-          val bmp =
-              r.getScaledFrameAtTime(
-                  t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 1280, 1280)
-          if (bmp != null) analyser(bmp)
+          // 1) le suivi du plateau reçoit toutes les images qu'on peut décoder (comme la caméra en direct)
+          val petit =
+              r2.getScaledFrameAtTime(
+                  t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 480, 480)
+          if (petit != null) {
+            val pw = petit.width
+            val ph = petit.height
+            val px = IntArray(pw * ph)
+            petit.getPixels(px, 0, pw, 0, 0, pw, ph)
+            val y = ByteArray(pw * ph)
+            for (k in px.indices) {
+              val p = px[k]
+              y[k] = ((((p shr 16) and 255) + 2 * ((p shr 8) and 255) + (p and 255)) / 4).toByte()
+            }
+            suivi.frame(y, pw, ph)
+            nbPetites++
+          }
+          // 2) l'analyse (coups) travaille à son rythme sur une grande image, avec la position du plateau suivie
+          if (!analyseOcc.get()) {
+            val grande =
+                r.getScaledFrameAtTime(
+                    t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 1280, 1280)
+            if (grande != null && analyseOcc.compareAndSet(false, true)) {
+              val id = suivi.id()
+              launch {
+                try {
+                  idImg = id
+                  analyser(grande)
+                } catch (e: Exception) {
+                  Log.w(TAG, "analyse vidéo", e)
+                } finally {
+                  analyseOcc.set(false)
+                }
+              }
+            }
+          }
         }
+        var att = 0
+        while (analyseOcc.get() && att++ < 100) kotlinx.coroutines.delay(100)
+        noter("VIDEO : fin, $nbPetites images suivies")
         statut("Vidéo terminée.")
       } catch (e: Exception) {
         statut("ERREUR vidéo : ${e.message}")
       } finally {
         try { r.release() } catch (e: Exception) {}
+        try { r2.release() } catch (e: Exception) {}
         lectureVideo = false
+        idImg = -1L
+        suivi.reset()
         if (pris) occupe.set(false)
       }
     }
@@ -859,6 +908,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     // si la lecture est mauvaise depuis un moment, on refait la recherche à neuf (sans a priori ni pieds des pièces)
     val doute = doutePlateau
     doutePlateau = false
+    // le suivi image par image donne déjà la position du plateau sur cette image
+    val qs: Array<DoubleArray>? = if (idImg >= 0L && suivi.sain()) suivi.quadA(idImg) else null
+    if (!doute && qs != null && partieActive && maintenant - dernierAncrage < 2500L) {
+      plateauSur = qs
+      plateauSurA = maintenant
+      plateauVu = true
+      return qs
+    }
     // sur trépied : on ne refait pas toute la recherche à chaque image
     // (pas de raccourci si ça bouge : le plateau a pu changer de place dans l'image)
     if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L && maintenant - dernierMouvement > 1500L) {
@@ -878,23 +935,63 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val pieds = ArrayList<DoubleArray>()
       for (p in pts) if (p.conf > 0.4) pieds.add(doubleArrayOf(p.x * s, p.y * s))
       // le plateau ne saute pas d'une case entre deux photos : on favorise la position trouvée juste avant
+      val ref = qs ?: sur
       val avant: Array<DoubleArray>? =
-          if (doute || sur == null) null else Array(4) { doubleArrayOf(sur[it][0] * g.w, sur[it][1] * g.h) }
+          if (doute || ref == null) null else Array(4) { doubleArrayOf(ref[it][0] * g.w, ref[it][1] * g.h) }
       val res = Lattice.trouve(g, if (doute) ArrayList<DoubleArray>() else pieds, avant)
       // au départ d'une partie, toutes les pièces sont sur le plateau : un quadrillage qui n'en contient que la moitié est faux
       if (res != null && res.v >= Lattice.SEUIL &&
           (partieActive || doute || pieds.size < 12 || fractionDedans(res.px, pieds) >= 0.6)) {
         val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
+        if (qs != null && !doute && ecartCoins(fr, qs, img) > 0.7) {
+          // le quadrillage cherché contredit le suivi (décalé d'une case ?) : je garde le suivi et je réessaierai
+          dernierAncrage = maintenant - 1200L
+          plateauSur = qs
+          plateauSurA = maintenant
+          plateauVu = true
+          return qs
+        }
         plateauSur = fr
         plateauSurA = maintenant
         plateauVu = true
+        dernierAncrage = maintenant
+        if (idImg >= 0L) suivi.ancre(idImg, fr)
         return fr
       }
     } catch (e: Exception) {
       Log.w(TAG, "repérage du plateau : $e")
     }
+    if (qs != null) {
+      // pas de quadrillage trouvé cette fois, mais le suivi tient toujours le plateau
+      plateauSur = qs
+      plateauSurA = maintenant
+      plateauVu = true
+      return qs
+    }
     plateauVu = false
     return sur
+  }
+
+  /** Écart maximal entre deux positions du plateau, en nombre de cases (on essaie les 4 décalages de coins). */
+  private fun ecartCoins(a: Array<DoubleArray>, b: Array<DoubleArray>, img: Bitmap): Double {
+    val w = img.width.toDouble()
+    val h = img.height.toDouble()
+    var cote = 0.0
+    for (i in 0 until 4) {
+      val j = (i + 1) % 4
+      cote += Math.hypot((b[i][0] - b[j][0]) * w, (b[i][1] - b[j][1]) * h)
+    }
+    val caseTaille = Math.max(cote / 4 / 8, 1.0)
+    var mini = Double.MAX_VALUE
+    for (d in 0 until 4) {
+      var mx = 0.0
+      for (i in 0 until 4) {
+        val k = (i + d) % 4
+        mx = Math.max(mx, Math.hypot((a[k][0] - b[i][0]) * w, (a[k][1] - b[i][1]) * h))
+      }
+      mini = Math.min(mini, mx)
+    }
+    return mini / caseTaille
   }
 
   /**
@@ -1231,7 +1328,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   /** Reçoit le plan de luminosité d'une image (lunettes ou téléphone) et décide s'il faut analyser. */
-  private fun surY(y: ByteArray, w: Int, h: Int) {
+  private fun surY(y: ByteArray, w: Int, h: Int, suiviFait: Boolean = false) {
+    if (!suiviFait) suivi.frame(y, w, h)
     dernierY = y
     dernierYw = w
     dernierYh = h
@@ -1284,9 +1382,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .setResolutionSelector(
                         ResolutionSelector.Builder()
+                            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                             .setResolutionStrategy(
                                 ResolutionStrategy(
-                                    Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                                    Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                             .build())
                     .build()
             analyseCam = analyse
@@ -1315,6 +1414,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             prov.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, apercu, analyse, photo)
             telephone = true
             precedent = null
+            suivi.reset()
             statut("Caméra du téléphone démarrée. Pose le téléphone face à l'échiquier.")
             _etat.update { it.copy(flux = "téléphone") }
           } catch (e: Exception) {
@@ -1331,10 +1431,16 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     fournisseur?.unbindAll()
     telephone = false
     capturePhoto = null
+    suivi.reset()
     _etat.update { it.copy(flux = "") }
     statut("Caméra du téléphone arrêtée.")
   }
 
+  private val suivi = Suivi() // suit le plateau d'une image à l'autre (quadrillage collé pendant les mouvements)
+  @Volatile private var idImg = -1L // numéro d'image du suivi correspondant à l'image analysée (-1 = aucun)
+  @Volatile private var dernierAncrage = 0L
+  @Volatile private var dernierSuivi = 0L
+  @Volatile private var imageDirectId = -1L
   @Volatile private var analyseCam: ImageAnalysis? = null
   @Volatile private var imageDirect: Bitmap? = null
   @Volatile private var imageDirectA = 0L
@@ -1343,31 +1449,51 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     try {
       val rot = img.imageInfo.rotationDegrees
       val maintenant = SystemClock.elapsedRealtime()
+      val plan = img.planes[0]
+      val w0 = img.width
+      val h0 = img.height
+      // luminosité (320x240), remise à l'endroit : sert au suivi du plateau et à mesurer le mouvement
+      val vertical = rot == 90 || rot == 270
+      val w = if (vertical) 240 else 320
+      val h = if (vertical) 320 else 240
+      val buf = plan.buffer
+      val stride = plan.rowStride
+      val pix = plan.pixelStride
+      val y = ByteArray(w * h)
+      for (r in 0 until h) for (c in 0 until w) {
+        val u = (c + 0.5) / w
+        val v = (r + 0.5) / h
+        val a: Double
+        val b: Double
+        when (rot) {
+          90 -> { a = v; b = 1 - u }
+          180 -> { a = 1 - u; b = 1 - v }
+          270 -> { a = 1 - v; b = u }
+          else -> { a = u; b = v }
+        }
+        val sx = (a * w0).toInt().coerceIn(0, w0 - 1)
+        val sy = (b * h0).toInt().coerceIn(0, h0 - 1)
+        val o = sy * stride + sx * pix
+        y[r * w + c] = (((buf.get(o).toInt() and 255) + 2 * (buf.get(o + 1).toInt() and 255) + (buf.get(o + 2).toInt() and 255)) / 4).toByte()
+      }
+      // le suivi ne travaille que quand ça bouge (ou de temps en temps) : ça économise la batterie
+      val bouge = maintenant - dernierMouvement < 600L
+      if (bouge || maintenant - dernierSuivi > 500L) {
+        suivi.frame(y, w, h)
+        dernierSuivi = maintenant
+      }
       // pendant un mouvement on garde l'image vidéo (couleur) : pas besoin d'attendre une photo
-      if (maintenant - dernierMouvement < 600L && !occupe.get()) {
+      if (bouge && !occupe.get()) {
         var b = img.toBitmap()
         if (rot != 0) {
           val m = Matrix().apply { postRotate(rot.toFloat()) }
           b = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
         }
         imageDirect = b
+        imageDirectId = suivi.id()
         imageDirectA = maintenant
       }
-      val plan = img.planes[0]
-      val w0 = img.width
-      val h0 = img.height
-      // luminosité seulement, sur une petite grille (suffit pour mesurer le mouvement)
-      val w = 160
-      val h = 120
-      val buf = plan.buffer
-      val stride = plan.rowStride
-      val pix = plan.pixelStride
-      val y = ByteArray(w * h)
-      for (r in 0 until h) for (c in 0 until w) {
-        val o = (r * h0 / h) * stride + (c * w0 / w) * pix
-        y[r * w + c] = ((buf.get(o).toInt() and 255) * 3 / 10 + (buf.get(o + 1).toInt() and 255) * 6 / 10 + (buf.get(o + 2).toInt() and 255) / 10).toByte()
-      }
-      surY(y, w, h)
+      surY(y, w, h, true)
     } catch (e: Exception) {
       Log.w(TAG, "analyse tel", e)
     } finally {
@@ -1421,13 +1547,19 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     viewModelScope.launch {
       try {
         var img: Bitmap? = null
+        idImg = -1L
         if (telephone) {
           val d = imageDirect
           val now = SystemClock.elapsedRealtime()
           if (d != null && now - imageDirectA < 300L && now - dernierMouvement < 600L) {
             img = d
+            idImg = imageDirectId
             imageDirect = null
-          } else img = photoTelephone()
+          } else {
+            val idAvant = suivi.id()
+            img = photoTelephone()
+            if (img != null) idImg = idAvant
+          }
         }
         val st = if (telephone) null else flux
         if (st != null) {
@@ -1453,7 +1585,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         }
         if (img == null && !telephone) {
           val y = dernierY
-          if (y != null) img = Detecteur.depuisY(y, dernierYw, dernierYh)
+          if (y != null) {
+            idImg = suivi.id()
+            img = Detecteur.depuisY(y, dernierYw, dernierYh)
+          }
         }
         if (img == null) {
           statut("Pas d'image. Démarre la caméra (lunettes ou téléphone).")
