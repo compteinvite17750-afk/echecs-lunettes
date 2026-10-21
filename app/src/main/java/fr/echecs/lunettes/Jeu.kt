@@ -588,6 +588,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         majPartie()
         suivi.reset()
         rotVideoSure = false
+        votes.clear()
         idImg = -1L
         dernierAncrage = 0L
         plateauSur = null
@@ -825,6 +826,27 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val plausible =
           (meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && mieuxQueRien) ||
               plausibleVideo
+      // vidéo : un coup qui revient souvent en tête avec une marge nette est accepté, même si la main cache des pièces
+      if (lectureVideo && !attendMonCoup) {
+        if (meilleur.ecart - extras <= 12 && marge >= 2 && choix.vue.nbPieces() >= 20) {
+          votes.add(meilleur.coup)
+          if (votes.size > 8) votes.removeAt(0)
+          val n = votes.count { it == meilleur.coup }
+          if (n >= 3) {
+            votes.clear()
+            coupEnAttente = null
+            incertain = 0
+            petitEcart = 0
+            coinsSauves = rc.coins
+            rotMem = choix.rot
+            noter("ADVERSAIRE accepté (votes) : ${meilleur.coup} (écart=$actuel, marge=$marge)")
+            coups.add(meilleur.coup)
+            sauver()
+            proposer("Adversaire : ${Partie.decrire(b, meilleur.coup)}. ", "", choix.vue)
+            return
+          }
+        }
+      }
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
@@ -1277,6 +1299,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
    */
   private var rattrapeVu: String? = null
+  private val votes = ArrayList<String>()
   private var rattrapeA = 0L
 
   /**
