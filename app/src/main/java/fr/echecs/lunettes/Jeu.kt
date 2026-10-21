@@ -944,7 +944,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     // (le suivi sert entre deux recherches ; le quadrillage trouvé le recale à chaque fois, car il est plus précis)
     // sur trépied : on ne refait pas toute la recherche à chaque image
     // (pas de raccourci si ça bouge : le plateau a pu changer de place dans l'image)
-    if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L && maintenant - dernierMouvement > 1500L) {
+    if (!doute && !lectureVideo && sur != null && telephone && maintenant - plateauSurA < 6000L && maintenant - dernierMouvement > 1500L) {
       plateauVu = true
       return sur
     }
