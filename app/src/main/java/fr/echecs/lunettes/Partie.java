@@ -24,7 +24,7 @@ public final class Partie {
         return b;
     }
 
-    static int caseDe(String sq) {
+    public static int caseDe(String sq) {
         int col = sq.charAt(0) - 'a';
         int rang = sq.charAt(1) - '0';
         return (8 - rang) * 8 + col;

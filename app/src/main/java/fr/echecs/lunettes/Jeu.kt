@@ -589,6 +589,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         suivi.reset()
         rotVideoSure = false
         votes.clear()
+        suiveur = Suiveur(Echiquier.depart())
         idImg = -1L
         dernierAncrage = 0L
         plateauSur = null
@@ -701,6 +702,53 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
   }
 
+  private var suiveur: Suiveur? = null
+
+  /**
+   * Lecture d'une vidéo : plusieurs historiques de coups sont suivis en parallèle ; celui qui colle le mieux
+   * avec toutes les images gagne (un coup raté ou une main devant l'échiquier ne casse plus rien).
+   */
+  private fun analyserAvecSuiveur(img: Bitmap, det: Detecteur) {
+    val sv = suiveur ?: return
+    val plateauImg = trouverPlateau(img, det)
+    if (plateauImg == null || !plateauVu) {
+      noter("suiveur : image ignorée (pas de plateau)")
+      return
+    }
+    val rc1 = coinsPour(plateauImg, img, rotMem)
+    var px1 = Array(4) { doubleArrayOf(rc1.coins[it][0] * img.width, rc1.coins[it][1] * img.height) }
+    if (moi == 'b') px1 = arrayOf(px1[2], px1[3], px1[0], px1[1])
+    val r0 = det.detecte(img, px1) ?: return
+    val vue = Detecteur.vue(r0.pts, px1)
+    val nb = vue.nbPieces()
+    _etat.update {
+      it.copy(
+          image = Detecteur.dessine(img, px1, r0.obs),
+          details = "pièces vues $nb · coups suivis ${sv.confirmes().size} · rotation $rotMem",
+      )
+    }
+    if (nb < 18) {
+      noter("suiveur : image ignorée (pièces vues : $nb)")
+      return
+    }
+    sv.observe(vue)
+    val meil = sv.meilleur()
+    noter("suiveur : vues=$nb meilleur=${meil.historique().takeLast(3)} confirmés=${sv.confirmes().size}")
+    val conf = sv.confirmes()
+    if (conf != coups) {
+      val avant = ArrayList<String>(coups)
+      coups.clear()
+      coups.addAll(conf)
+      var e = Echiquier.depart()
+      for ((i, c) in conf.withIndex()) {
+        if (i >= avant.size || avant[i] != c) noter("COUP VU : " + Partie.decrire(e.b, c))
+        e = e.jouer(c)
+      }
+      sauver()
+      majPartie()
+    }
+  }
+
   private fun analyser(img: Bitmap) {
     val m = moteur ?: return statut("Stockfish n'est pas prêt.")
     val det = detecteur ?: return statut("Le modèle n'est pas chargé.")
@@ -708,6 +756,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     try {
       if (!partieActive) {
         demarrageAuto(img, det, m)
+        return
+      }
+      if (lectureVideo) {
+        analyserAvecSuiveur(img, det)
         return
       }
       val pos = position()
