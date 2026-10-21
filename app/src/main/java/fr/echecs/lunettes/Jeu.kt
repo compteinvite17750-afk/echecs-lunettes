@@ -104,7 +104,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val h = java.text.SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(java.util.Date())
       synchronized(journal) {
         journal.add("$h $s")
-        while (journal.size > 700) journal.removeAt(0)
+        while (journal.size > 3000) journal.removeAt(0)
       }
       val now = SystemClock.elapsedRealtime()
       if (now - dernierJournal > 4000) {
@@ -757,6 +757,25 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var plateauSurA = 0L
   private var doutePlateau = false
 
+  private fun dansQuad(q: Array<DoubleArray>, x: Double, y: Double): Boolean {
+    var pos = 0
+    var neg = 0
+    for (i in 0..3) {
+      val a = q[i]
+      val b = q[(i + 1) % 4]
+      val c = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
+      if (c >= 0) pos++ else neg++
+    }
+    return pos == 4 || neg == 4
+  }
+
+  private fun fractionDedans(q: Array<DoubleArray>, pieds: List<DoubleArray>): Double {
+    if (pieds.isEmpty()) return 1.0
+    var n = 0
+    for (p in pieds) if (dansQuad(q, p[0], p[1] - 3.0)) n++
+    return n.toDouble() / pieds.size
+  }
+
   /**
    * Repère l'échiquier par son quadrillage (aidé par les pieds des pièces). Si l'image est mauvaise
    * (main devant, pièces qui cachent), on garde la dernière position sûre : le téléphone ne bouge pas.
@@ -785,7 +804,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val avant: Array<DoubleArray>? =
           if (doute || sur == null) null else Array(4) { doubleArrayOf(sur[it][0] * g.w, sur[it][1] * g.h) }
       val res = Lattice.trouve(g, if (doute) ArrayList<DoubleArray>() else pieds, avant)
-      if (res != null && res.v >= Lattice.SEUIL) {
+      // au départ d'une partie, toutes les pièces sont sur le plateau : un quadrillage qui n'en contient que la moitié est faux
+      if (res != null && res.v >= Lattice.SEUIL &&
+          (partieActive || doute || pieds.size < 12 || fractionDedans(res.px, pieds) >= 0.6)) {
         val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
         plateauSur = fr
         plateauSurA = maintenant
