@@ -711,7 +711,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val trait = e[0].split(" ")[1][0]
       val legaux = m.coupsLegaux(pos)
       if (legaux.isEmpty()) return statut("La partie est terminée. Lance une nouvelle partie.")
-      if (trait == moi) {
+      // (en lecture de vidéo, je lis aussi les coups des noirs : celui qui filme joue les deux camps)
+      if (trait == moi && !lectureVideo) {
         // c'est à moi : on n'a pas encore proposé de coup (ex. après une annulation)
         proposer("")
         return
