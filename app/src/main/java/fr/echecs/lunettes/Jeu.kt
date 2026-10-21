@@ -599,16 +599,46 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         noter("VIDEO : lecture de ${dureeMs / 1000} s")
         val debut = SystemClock.elapsedRealtime()
         var nbPetites = 0
+        val nbImages = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT) ?: "0").toIntOrNull() ?: 0
+        val cadence = if (nbImages > 0) nbImages * 1000.0 / dureeMs else 30.0
+        var idx = 0
         while (true) {
           val t = SystemClock.elapsedRealtime() - debut
           if (t >= dureeMs) break
-          // 1) le suivi du plateau reçoit toutes les images qu'on peut décoder (comme la caméra en direct)
-          val petit =
-              r2.getScaledFrameAtTime(
-                  t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 480, 480)
-          if (petit != null) {
-            val pw = petit.width
-            val ph = petit.height
+          val cible = (t * cadence / 1000.0).toInt()
+          if (nbImages > 0 && idx >= nbImages) break
+          if (idx < cible - 10) idx = cible // en retard : on saute des images (comme une caméra en direct)
+          if (idx > cible + 1) {
+            kotlinx.coroutines.delay(10)
+            continue
+          }
+          // décodage de plusieurs images de suite (rapide) ; sinon, repli sur une image à la fois
+          var lot: List<Bitmap>? = null
+          if (nbImages > 0) {
+            try {
+              lot = r2.getFramesAtIndex(idx, 4)
+            } catch (e: Exception) {
+              lot = null
+            }
+          }
+          if (lot.isNullOrEmpty()) {
+            val un =
+                r2.getScaledFrameAtTime(
+                    (idx * 1000.0 / cadence * 1000).toLong(),
+                    android.media.MediaMetadataRetriever.OPTION_CLOSEST, 1280, 1280)
+            lot = if (un != null) listOf(un) else null
+            if (lot == null) {
+              idx++
+              continue
+            }
+          }
+          val images: List<Bitmap> = lot ?: emptyList()
+          var dernier: Bitmap? = null
+          for (fb in images) {
+            // 1) le suivi du plateau reçoit chaque image, comme avec la caméra en direct
+            val pw = 320
+            val ph = Math.max(1, Math.round(320f * fb.height / fb.width))
+            val petit = Bitmap.createScaledBitmap(fb, pw, ph, true)
             val px = IntArray(pw * ph)
             petit.getPixels(px, 0, pw, 0, 0, pw, ph)
             val y = ByteArray(pw * ph)
@@ -617,31 +647,32 @@ class Jeu(app: Application) : AndroidViewModel(app) {
               y[k] = ((((p shr 16) and 255) + 2 * ((p shr 8) and 255) + (p and 255)) / 4).toByte()
             }
             suivi.frame(y, pw, ph)
+            if (petit !== fb) petit.recycle()
             nbPetites++
+            idx++
+            dernier = fb
           }
-          // 2) l'analyse (coups) travaille à son rythme sur une grande image, avec la position du plateau suivie
-          if (!analyseOcc.get()) {
-            val grande =
-                r.getScaledFrameAtTime(
-                    t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 1280, 1280)
-            if (grande != null && analyseOcc.compareAndSet(false, true)) {
-              val id = suivi.id()
-              launch {
-                try {
-                  idImg = id
-                  analyser(grande)
-                } catch (e: Exception) {
-                  Log.w(TAG, "analyse vidéo", e)
-                } finally {
-                  analyseOcc.set(false)
-                }
+          // 2) l'analyse (coups) travaille à son rythme sur la dernière image du lot, avec la position du plateau suivie
+          val grande = dernier
+          if (grande != null && !analyseOcc.get() && analyseOcc.compareAndSet(false, true)) {
+            val id = suivi.id()
+            val img = if (grande.width > 1280) Bitmap.createScaledBitmap(grande, 1280, Math.round(1280f * grande.height / grande.width), true) else grande
+            launch {
+              try {
+                idImg = id
+                analyser(img)
+              } catch (e: Exception) {
+                Log.w(TAG, "analyse vidéo", e)
+              } finally {
+                analyseOcc.set(false)
               }
             }
           }
+          for (fb in images) if (fb !== dernier) fb.recycle()
         }
         var att = 0
         while (analyseOcc.get() && att++ < 100) kotlinx.coroutines.delay(100)
-        noter("VIDEO : fin, $nbPetites images suivies")
+        noter("VIDEO : fin, $nbPetites images suivies sur ${nbImages} (cadence ${Math.round(cadence)}/s)")
         statut("Vidéo terminée.")
       } catch (e: Exception) {
         statut("ERREUR vidéo : ${e.message}")
@@ -910,7 +941,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     doutePlateau = false
     // le suivi image par image donne déjà la position du plateau sur cette image
     val qs: Array<DoubleArray>? = if (idImg >= 0L && suivi.sain()) suivi.quadA(idImg) else null
-    if (!doute && qs != null && partieActive && maintenant - dernierAncrage < 2500L) {
+    // (le suivi reste la référence tant que les lectures sont bonnes ; en cas de doute on refait la recherche à neuf)
+    if (!doute && qs != null && partieActive) {
       plateauSur = qs
       plateauSurA = maintenant
       plateauVu = true
