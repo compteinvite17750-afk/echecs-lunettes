@@ -971,7 +971,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           val eAv = if (av != null) Partie.ecart(r.obs, av) else 99
           if (eAv - extras > 3 && actuel - extras > 3) {
             attenteVaine++
-            if (attenteVaine >= 3) {
+            if (!lectureVideo && recalerSurSuiveur()) {
+              attenteVaine = 0
+              return
+            }
+            if (attenteVaine >= 2) {
               // la photo ne ressemble ni à avant ni à maintenant : les deux ont dû jouer, on relit normalement
               attendMonCoup = false
               attenteVaine = 0
@@ -993,7 +997,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             incertain = 0
             return
           }
-          if (!lectureVideo && incertain >= 3 && recalerSurSuiveur()) {
+          if (!lectureVideo && incertain >= 1 && recalerSurSuiveur()) {
             incertain = 0
             return
           }
@@ -1224,6 +1228,30 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       else Bitmap.createBitmap(img, 0, 0, img.width, img.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
 
   /** Quand aucune partie n'est suivie : reconnaît une nouvelle partie, reprend la partie en cours, ou relit tout l'échiquier. */
+  /** Au départ : la dame et un fou d'un même camp sont-ils échangés ? (je le dis, ça ne change pas le jeu) */
+  private fun avertirInversion(pts: List<Detecteur.Pt>, px: Array<DoubleArray>) {
+    try {
+      val lu = Detecteur.lire(pts, px)
+      var ref = Partie.depuisFen(Lecteur.FEN_DEPART)
+      if (moi == 'b') ref = Lecteur.tourne180(ref)
+      for (i in 0 until 64) {
+        val q = ref[i]
+        if (q != 'q' && q != 'Q') continue
+        val f = if (q == 'q') 'b' else 'B'
+        if (lu[i] != f) continue
+        for (j in 0 until 64) {
+          if (ref[j] == f && lu[j] == q) {
+            val camp = if (q == 'q') "noirs" else "blancs"
+            noter("INVERSION au départ : dame et fou $camp")
+            parle("Attention, la dame et un fou $camp sont inversés au départ.")
+            return
+          }
+        }
+      }
+    } catch (e: Exception) {
+    }
+  }
+
   private fun demarrageAuto(img: Bitmap, det: Detecteur, m: Moteur) {
     val occDepart = Partie.occupation(Partie.depuisFen(Lecteur.FEN_DEPART))
     val occDepartInv = Partie.occupation(Lecteur.tourne180(Partie.depuisFen(Lecteur.FEN_DEPART)))
@@ -1261,6 +1289,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         lectureVue = null
         sauver()
         majPartie()
+        avertirInversion(r0.pts, pxR)
         if (moi == 'w') proposer("Nouvelle partie reconnue. ", "Nouvelle partie. ")
         else {
           statut("Nouvelle partie reconnue : tu as les noirs. J'attends le coup des blancs.")
