@@ -18,6 +18,9 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import android.util.Size
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -1215,6 +1218,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             val analyse =
                 ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .setResolutionSelector(
+                        ResolutionSelector.Builder()
+                            .setResolutionStrategy(
+                                ResolutionStrategy(
+                                    Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                            .build())
                     .build()
             analyse.setAnalyzer(execAnalyse) { img -> analyserTel(img) }
             val photo =
@@ -1260,17 +1270,36 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     statut("Caméra du téléphone arrêtée.")
   }
 
+  @Volatile private var imageDirect: Bitmap? = null
+  @Volatile private var imageDirectA = 0L
+
   private fun analyserTel(img: ImageProxy) {
     try {
+      val rot = img.imageInfo.rotationDegrees
+      val maintenant = SystemClock.elapsedRealtime()
+      // pendant un mouvement on garde l'image vidéo (couleur) : pas besoin d'attendre une photo
+      if (maintenant - dernierMouvement < 600L && !occupe.get()) {
+        var b = img.toBitmap()
+        if (rot != 0) {
+          val m = Matrix().apply { postRotate(rot.toFloat()) }
+          b = Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+        }
+        imageDirect = b
+        imageDirectA = maintenant
+      }
       val plan = img.planes[0]
-      val w = img.width
-      val h = img.height
-      val stride = plan.rowStride
+      val w0 = img.width
+      val h0 = img.height
+      // luminosité seulement, sur une petite grille (suffit pour mesurer le mouvement)
+      val w = 160
+      val h = 120
       val buf = plan.buffer
+      val stride = plan.rowStride
+      val pix = plan.pixelStride
       val y = ByteArray(w * h)
-      for (r in 0 until h) {
-        buf.position(r * stride)
-        buf.get(y, r * w, w)
+      for (r in 0 until h) for (c in 0 until w) {
+        val o = (r * h0 / h) * stride + (c * w0 / w) * pix
+        y[r * w + c] = ((buf.get(o).toInt() and 255) * 3 / 10 + (buf.get(o + 1).toInt() and 255) * 6 / 10 + (buf.get(o + 2).toInt() and 255) / 10).toByte()
       }
       surY(y, w, h)
     } catch (e: Exception) {
@@ -1326,7 +1355,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     viewModelScope.launch {
       try {
         var img: Bitmap? = null
-        if (telephone) img = photoTelephone()
+        if (telephone) {
+          val d = imageDirect
+          val now = SystemClock.elapsedRealtime()
+          if (d != null && now - imageDirectA < 300L && now - dernierMouvement < 600L) {
+            img = d
+            imageDirect = null
+          } else img = photoTelephone()
+        }
         val st = if (telephone) null else flux
         if (st != null) {
           var photo: PhotoData? = null
