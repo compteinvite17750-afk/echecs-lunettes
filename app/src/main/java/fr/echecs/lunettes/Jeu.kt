@@ -695,6 +695,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         try { r.release() } catch (e: Exception) {}
         try { r2.release() } catch (e: Exception) {}
         lectureVideo = false
+        suiveur = null
+        svBase = emptyList()
         idImg = -1L
         suivi.reset()
         if (pris) occupe.set(false)
@@ -747,6 +749,48 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       sauver()
       majPartie()
     }
+  }
+
+  private var svBase: List<String> = emptyList()
+
+  /** Suivi de partie par hypothèses, en parallèle de la lecture normale (sert à se recaler après un coup raté). */
+  private fun suiveurPour(): Suiveur {
+    val sv = suiveur
+    if (sv != null && coups.size >= svBase.size) {
+      val conf = ArrayList<String>(svBase)
+      conf.addAll(sv.confirmes())
+      var k = 0
+      while (k < conf.size && k < coups.size && conf[k] == coups[k]) k++
+      // la partie suivie reste valable tant que la partie lue ne la contredit pas
+      if (k >= minOf(conf.size, coups.size) && k >= svBase.size) return sv
+    }
+    svBase = ArrayList<String>(coups)
+    var e = Echiquier.depart()
+    for (c in svBase) e = e.jouer(c)
+    val nouveau = Suiveur(e)
+    suiveur = nouveau
+    return nouveau
+  }
+
+  /** La lecture normale ne comprend plus : si le suivi par hypothèses a une autre version de la partie, je la prends. */
+  private fun recalerSurSuiveur(): Boolean {
+    val sv = suiveur ?: return false
+    val conf = ArrayList<String>(svBase)
+    conf.addAll(sv.confirmes())
+    if (conf == coups) return false
+    var k = 0
+    while (k < conf.size && k < coups.size && conf[k] == coups[k]) k++
+    if (k == conf.size) return false // le suivi est en retard sur la partie : rien de nouveau
+    noter("RECALAGE sur le suivi : ${conf.size} coups (avant : ${coups.size}), dernier : ${conf.takeLast(3)}")
+    coups.clear()
+    coups.addAll(conf)
+    coupEnAttente = null
+    attendMonCoup = false
+    sauver()
+    majPartie()
+    statut("Je me recale sur la partie que je vois.")
+    verifDemandeeA = SystemClock.elapsedRealtime() + 600
+    return true
   }
 
   private fun analyser(img: Bitmap) {
@@ -819,6 +863,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       val choix: Lecture = meil
       if (lectureVideo && choix.qualite <= 4) rotVideoSure = true
+      if (!lectureVideo && plateauVu && choix.vue.nbPieces() >= 18) {
+        try {
+          suiveurPour().observe(choix.vue)
+        } catch (e: Exception) {
+          Log.w(TAG, "suiveur", e)
+        }
+      }
       val rc = choix.rc
       val px = choix.px
       val r = choix.r
@@ -934,6 +985,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           incertain++
           if (incertain == 3 || incertain == 8) doutePlateau = true // le quadrillage est peut-être décalé
           if (lectureVideo && incertain >= 3 && rattraper(choix.vue, b, legaux, choix.r.obs, actuel, extras)) {
+            incertain = 0
+            return
+          }
+          if (!lectureVideo && incertain >= 3 && recalerSurSuiveur()) {
             incertain = 0
             return
           }
