@@ -816,7 +816,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val actuelFin = cActuel[0] + cActuel[1]
       val mieuxQueRien =
           actuel - meilleur.ecart >= (if (recent) 2 else 1) ||
-              actuelFin - meilleur.fin >= (if (recent) 1.6 else 0.7)
+              actuelFin - meilleur.fin >= (if (recent) 1.6 else 0.7) ||
+              (lectureVideo && marge >= 3)
       // en vidéo, la main cache souvent des pièces : on compare surtout aux autres coups possibles
       val plausibleVideo =
           lectureVideo && meilleur.ecart - extras <= 9 && marge >= 1 && margeF >= 1.0 &&
@@ -858,7 +859,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (actuel - extras >= 4) {
           incertain++
           if (incertain == 3 || incertain == 8) doutePlateau = true // le quadrillage est peut-être décalé
-          if (lectureVideo && incertain >= 2 && rattraper(choix.vue, b, legaux, choix.r.obs, actuel, extras)) {
+          if (lectureVideo && incertain >= 3 && rattraper(choix.vue, b, legaux, choix.r.obs, actuel, extras)) {
             incertain = 0
             return
           }
@@ -889,7 +890,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       petitEcart = 0
       coinsSauves = rc.coins
       rotMem = choix.rot
-      val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
+      val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2) ||
+          (lectureVideo && marge >= 3 && margeF >= 2.0 && meilleur.ecart - extras <= 3)
       if ((!fort || recent) && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         coupEnAttenteA = SystemClock.elapsedRealtime()
@@ -982,7 +984,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           doubleArrayOf(img.width.toDouble(), img.height.toDouble()),
           doubleArrayOf(0.0, img.height.toDouble()),
       )
-      val pts = det.detecte(img, toute)?.pts ?: emptyList()
+      // en vidéo, quand le suivi tient le plateau, je saute cette première détection (lente) : les pieds ne servent qu'à guider la recherche
+      val pts = if (lectureVideo && qs != null && partieActive) emptyList() else (det.detecte(img, toute)?.pts ?: emptyList())
       val s = g.w.toDouble() / img.width
       val pieds = ArrayList<DoubleArray>()
       for (p in pts) if (p.conf > 0.4) pieds.add(doubleArrayOf(p.x * s, p.y * s))
@@ -1274,6 +1277,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
    */
   private var rattrapeVu: String? = null
+  private var rattrapeA = 0L
 
   /**
    * Vidéo seulement (celui qui filme joue les deux camps, souvent plusieurs coups d'affilée) :
@@ -1283,6 +1287,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun rattraper(vue: Lecteur.Vue, b: CharArray, legaux: List<String>, obs: IntArray, actuel: Int, extras: Int): Boolean {
     val m = moteur ?: return false
     if (vue.nbPieces() < 20) return false
+    val maintenant = SystemClock.elapsedRealtime()
+    if (maintenant - rattrapeA < 2500L) return false
+    rattrapeA = maintenant
     class Noeud(val b: CharArray, val seq: List<String>, val touche: Set<Int>, val ecart: Int, val occ: IntArray)
     fun cases(mv: String): IntArray =
         intArrayOf((8 - (mv[1] - '0')) * 8 + (mv[0] - 'a'), (8 - (mv[3] - '0')) * 8 + (mv[2] - 'a'))
@@ -1291,7 +1298,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     for (i in 0 until 64) if (occ0[i] != obs[i]) d0.add(i)
     val resultats = ArrayList<Noeud>()
     var faisceau: List<Noeud> = listOf(Noeud(b, emptyList(), d0, actuel, occ0))
-    for (prof in 1..4) {
+    for (prof in 1..6) {
       val suivants = ArrayList<Noeud>()
       for (n in faisceau) {
         val l = if (prof == 1) legaux else m.coupsLegaux(positionDe(ArrayList<String>(coups).apply { addAll(n.seq) }))
@@ -1304,7 +1311,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       suivants.sortBy { it.ecart }
       resultats.addAll(suivants)
-      faisceau = suivants.take(8)
+      faisceau = suivants.take(10)
       if (faisceau.isEmpty()) break
     }
     resultats.sortWith(compareBy({ it.ecart }, { it.seq.size }))
