@@ -1226,6 +1226,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
                                     Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                             .build())
                     .build()
+            analyseCam = analyse
             analyse.setAnalyzer(execAnalyse) { img -> analyserTel(img) }
             val photo =
                 ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
@@ -1244,6 +1245,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
                           else -> Surface.ROTATION_0
                         }
                     capturePhoto?.targetRotation = rot
+                    analyseCam?.targetRotation = rot
                   }
                 }.also { it.enable() }
             prov.unbindAll()
@@ -1270,6 +1272,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     statut("Caméra du téléphone arrêtée.")
   }
 
+  @Volatile private var analyseCam: ImageAnalysis? = null
   @Volatile private var imageDirect: Bitmap? = null
   @Volatile private var imageDirectA = 0L
 
