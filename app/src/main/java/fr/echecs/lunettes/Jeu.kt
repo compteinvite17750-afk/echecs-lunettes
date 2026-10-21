@@ -90,6 +90,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
   // photos gardées pour réentraîner la reconnaissance (dossier Téléchargements/echecs-photos)
   private var dernierEnreg = 0L
+  private var dernierCle = -1
   private var dernierePropA = 0L
   private var petitEcart = 0
   private var forceRelire = false
@@ -147,10 +148,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var nbEnreg = -1
 
   /** Garde une image où la position lue colle avec la partie suivie, avec la position exacte et les coins du plateau. */
-  private fun enregistrer(img: Bitmap, fen: String, coins: Array<DoubleArray>) {
+  private fun enregistrer(img: Bitmap, fen: String, coins: Array<DoubleArray>, cle: Int) {
     try {
       val now = SystemClock.elapsedRealtime()
-      if (now - dernierEnreg < 4000) return
+      // une seule photo par position de la partie (après chaque coup, le tien comme celui de l'adversaire)
+      if (cle == dernierCle || now - dernierEnreg < 1500) return
       val res = getApplication<Application>().contentResolver
       if (nbEnreg < 0 || nbEnreg >= 400) {
         // on compte les photos réellement présentes dans le dossier (si tu les supprimes, ça repart)
@@ -166,6 +168,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       if (nbEnreg >= 400) return
       dernierEnreg = now
+      dernierCle = cle
       val nom = "p" + System.currentTimeMillis()
       val cvImg = ContentValues()
       cvImg.put(MediaStore.MediaColumns.DISPLAY_NAME, "$nom.jpg")
@@ -627,7 +630,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           return
         }
       }
-      if (actuel - extras <= 1) enregistrer(imgOk, e[0], px)
+      if (actuel - extras <= 1) enregistrer(imgOk, e[0], px, coups.size)
       _etat.update {
         it.copy(
             image = Detecteur.dessine(imgOk, px, r.obs),
@@ -720,6 +723,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       noter("ADVERSAIRE accepté : ${meilleur.coup} (écart=$actuel, marge=$marge, fort=$fort, récent=$recent)")
       coups.add(meilleur.coup)
       sauver()
+      enregistrer(imgOk, m.etat(position())[0], px, coups.size)
       if (!proposer("Adversaire : $phrase. ", "", choix.vue)) {
         // le coup que je voulais te donner est impossible sur l'échiquier réel : je me suis trompé plus tôt
         coups.removeAt(coups.size - 1)
