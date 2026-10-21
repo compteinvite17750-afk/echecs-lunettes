@@ -91,6 +91,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var moi = 'w'
   private var coinsSauves: Array<DoubleArray>? = null
   private var rotMem = 0
+  @Volatile private var rotVideoSure = false
+  private var coupEnAttenteA = 0L
 
   // photos gardées pour réentraîner la reconnaissance (dossier Téléchargements/echecs-photos)
   private var dernierEnreg = 0L
@@ -585,6 +587,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         sauver()
         majPartie()
         suivi.reset()
+        rotVideoSure = false
         idImg = -1L
         dernierAncrage = 0L
         plateauSur = null
@@ -725,7 +728,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val candidats = ArrayList<IntArray>()
       candidats.add(Partie.occupation(b))
       for (m1 in legaux) candidats.add(Partie.occupation(Partie.apres(b, m1)))
-      val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
+      val ordre = if (lectureVideo && rotVideoSure) listOf(rotMem) else listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
       val plateauImg = trouverPlateau(img, det)
       if (plateauImg == null) {
         _etat.update { it.copy(image = Detecteur.dessine(img, null, null)) }
@@ -762,6 +765,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         return
       }
       val choix: Lecture = meil
+      if (lectureVideo && choix.qualite <= 4) rotVideoSure = true
       val rc = choix.rc
       val px = choix.px
       val r = choix.r
@@ -813,8 +817,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val mieuxQueRien =
           actuel - meilleur.ecart >= (if (recent) 2 else 1) ||
               actuelFin - meilleur.fin >= (if (recent) 1.6 else 0.7)
+      // en vidéo, la main cache souvent des pièces : on compare surtout aux autres coups possibles
+      val plausibleVideo =
+          lectureVideo && meilleur.ecart - extras <= 9 && marge >= 1 && margeF >= 1.0 &&
+              actuel - meilleur.ecart >= 2 && mieuxQueRien
       val plausible =
-          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && mieuxQueRien
+          (meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && mieuxQueRien) ||
+              plausibleVideo
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
@@ -823,7 +832,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (av != null && actuel < Partie.ecart(r.obs, av)) attendMonCoup = false
       }
       if (!plausible) {
-        coupEnAttente = null
+        // en vidéo, un coup en attente survit à une mauvaise image (main devant) pendant 10 s
+        if (!lectureVideo || SystemClock.elapsedRealtime() - coupEnAttenteA > 10000L) coupEnAttente = null
         if (attendMonCoup) {
           // On attend que le joueur joue son coup : on ne se plaint pas pendant qu'il joue.
           val av = occAvant
@@ -882,6 +892,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val fort = (marge >= 3 && actuel - meilleur.ecart >= 4) || (meilleur.ecart - extras <= 1 && marge >= 2 && actuel - meilleur.ecart >= 2)
       if ((!fort || recent) && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
+        coupEnAttenteA = SystemClock.elapsedRealtime()
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
         verifDemandeeA = SystemClock.elapsedRealtime() + 800
         return
