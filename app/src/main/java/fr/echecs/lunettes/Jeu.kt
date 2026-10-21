@@ -575,6 +575,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         statut("Je cherche l'échiquier…")
         return
       }
+      // la caméra vient de bouger et je ne retrouve pas le quadrillage : l'ancien est sans doute faux, j'attends
+      if (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 2500L) {
+        statut("Je cherche l'échiquier…")
+        verifDemandeeA = SystemClock.elapsedRealtime() + 800
+        return
+      }
       for (rot in ordre) {
         // l'image reste droite (les pièces doivent être debout pour être reconnues) : c'est le plateau qu'on
         // tourne, en décalant les coins d'un cran (4 orientations possibles du plateau)
@@ -756,6 +762,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var plateauSur: Array<DoubleArray>? = null
   private var plateauSurA = 0L
   private var doutePlateau = false
+  private var plateauVu = true // false quand le quadrillage n'a pas été retrouvé sur la dernière image
 
   private fun dansQuad(q: Array<DoubleArray>, x: Double, y: Double): Boolean {
     var pos = 0
@@ -787,7 +794,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val doute = doutePlateau
     doutePlateau = false
     // sur trépied : on ne refait pas toute la recherche à chaque image
-    if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L) return sur
+    // (pas de raccourci si ça bouge : le plateau a pu changer de place dans l'image)
+    if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L && maintenant - dernierMouvement > 1500L) {
+      plateauVu = true
+      return sur
+    }
     try {
       val g = Detecteur.gris1000(img)
       val toute = arrayOf(
@@ -810,11 +821,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
         plateauSur = fr
         plateauSurA = maintenant
+        plateauVu = true
         return fr
       }
     } catch (e: Exception) {
       Log.w(TAG, "repérage du plateau : $e")
     }
+    plateauVu = false
     return sur
   }
 
@@ -841,7 +854,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val cas = ArrayList<Cas>()
     val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
     val plateauImg = trouverPlateau(img, det)
-    if (plateauImg == null) {
+    if (plateauImg == null || (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 2500L)) {
       statut("Je cherche l'échiquier…")
       return
     }
