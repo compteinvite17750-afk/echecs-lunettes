@@ -684,6 +684,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (actuel - extras >= 2) petitEcart++ else petitEcart = 0
         if (actuel - extras >= 4) {
           incertain++
+          if (incertain == 3 || incertain == 8) doutePlateau = true // le quadrillage est peut-être décalé
           if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
             incertain = 0
             return
@@ -754,6 +755,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   // dernière position sûre du plateau (fractions de l'image non tournée) : sert quand une image est mauvaise
   private var plateauSur: Array<DoubleArray>? = null
   private var plateauSurA = 0L
+  private var doutePlateau = false
 
   /**
    * Repère l'échiquier par son quadrillage (aidé par les pieds des pièces). Si l'image est mauvaise
@@ -762,8 +764,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun trouverPlateau(img: Bitmap, det: Detecteur): Array<DoubleArray>? {
     val maintenant = SystemClock.elapsedRealtime()
     val sur = plateauSur
+    // si la lecture est mauvaise depuis un moment, on refait la recherche à neuf (sans a priori ni pieds des pièces)
+    val doute = doutePlateau
+    doutePlateau = false
     // sur trépied : on ne refait pas toute la recherche à chaque image
-    if (sur != null && telephone && maintenant - plateauSurA < 6000L) return sur
+    if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L) return sur
     try {
       val g = Detecteur.gris1000(img)
       val toute = arrayOf(
@@ -778,8 +783,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       for (p in pts) if (p.conf > 0.4) pieds.add(doubleArrayOf(p.x * s, p.y * s))
       // le plateau ne saute pas d'une case entre deux photos : on favorise la position trouvée juste avant
       val avant: Array<DoubleArray>? =
-          if (sur == null) null else Array(4) { doubleArrayOf(sur[it][0] * g.w, sur[it][1] * g.h) }
-      val res = Lattice.trouve(g, pieds, avant)
+          if (doute || sur == null) null else Array(4) { doubleArrayOf(sur[it][0] * g.w, sur[it][1] * g.h) }
+      val res = Lattice.trouve(g, if (doute) ArrayList<DoubleArray>() else pieds, avant)
       if (res != null && res.v >= Lattice.SEUIL) {
         val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
         plateauSur = fr
