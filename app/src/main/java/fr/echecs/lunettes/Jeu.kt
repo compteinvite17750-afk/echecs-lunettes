@@ -848,6 +848,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (actuel - extras >= 4) {
           incertain++
           if (incertain == 3 || incertain == 8) doutePlateau = true // le quadrillage est peut-être décalé
+          if (lectureVideo && incertain >= 2 && rattraper(choix.vue, b, legaux, actuel, extras)) {
+            incertain = 0
+            return
+          }
           if (incertain >= 2 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
             incertain = 0
             return
@@ -1258,6 +1262,51 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    * Le joueur a peut-être joué autre chose que le coup conseillé (et l'adversaire a peut-être déjà répondu).
    * On essaie tous ces cas et on garde celui qui colle le mieux avec ce que la caméra voit.
    */
+  private var rattrapeVu: String? = null
+
+  /**
+   * Vidéo seulement (celui qui filme joue les deux camps, parfois deux coups d'affilée sans pause) :
+   * si aucun coup seul ne colle, je cherche une suite de deux coups ; elle doit être vue deux fois de suite.
+   */
+  private fun rattraper(vue: Lecteur.Vue, b: CharArray, legaux: List<String>, actuel: Int, extras: Int): Boolean {
+    val m = moteur ?: return false
+    class Cand(val ecart: Int, val seq: List<String>, val occ: IntArray)
+    val cands = ArrayList<Cand>()
+    for (m1 in legaux) {
+      val b1 = Partie.apres(b, m1)
+      val suite = ArrayList<String>(coups)
+      suite.add(m1)
+      for (m2 in m.coupsLegaux(positionDe(suite))) {
+        val b2 = Partie.apres(b1, m2)
+        cands.add(Cand(vue.ecart(b2), listOf(m1, m2), Partie.occupation(b2)))
+      }
+    }
+    cands.sortBy { it.ecart }
+    val best = cands.firstOrNull() ?: return false
+    val autre = cands.firstOrNull { !it.occ.contentEquals(best.occ) }
+    val marge = (autre?.ecart ?: 99) - best.ecart
+    if (best.ecart - extras > 3 || marge < 2 || actuel - best.ecart < 4) {
+      rattrapeVu = null
+      return false
+    }
+    val cle = best.seq.joinToString(" ")
+    if (rattrapeVu != cle) {
+      rattrapeVu = cle
+      return false
+    }
+    rattrapeVu = null
+    var bb = b
+    for (c in best.seq) {
+      noter("COUP VU : " + Partie.decrire(bb, c) + " (deux coups d'affilée)")
+      bb = Partie.apres(bb, c)
+      coups.add(c)
+    }
+    noter("RATTRAPAGE : ${best.seq} (écart=${best.ecart}, marge=$marge)")
+    sauver()
+    majPartie()
+    return true
+  }
+
   private fun resynchroniser(vue: Lecteur.Vue, ecartNormal: Int, extras: Int = 0): Boolean {
     val m = moteur ?: return false
     if (coups.isEmpty()) return false
