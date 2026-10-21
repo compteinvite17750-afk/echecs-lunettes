@@ -1,6 +1,7 @@
 package fr.echecs.lunettes
 
 import android.app.Application
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -92,6 +93,56 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var dernierePropA = 0L
   private var petitEcart = 0
   private var forceRelire = false
+
+  // journal de ce que fait l'appli (Téléchargements/echecs-photos/echecs-journal.txt) : sert à comprendre les erreurs
+  private val journal = ArrayList<String>()
+  private var dernierJournal = 0L
+
+  private fun noter(s: String) {
+    try {
+      val h = java.text.SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(java.util.Date())
+      synchronized(journal) {
+        journal.add("$h $s")
+        while (journal.size > 700) journal.removeAt(0)
+      }
+      val now = SystemClock.elapsedRealtime()
+      if (now - dernierJournal > 4000) {
+        dernierJournal = now
+        ecrireJournal()
+      }
+    } catch (e: Exception) {
+    }
+  }
+
+  private fun ecrireJournal() {
+    try {
+      val res = getApplication<Application>().contentResolver
+      val nom = "echecs-journal.txt"
+      val col = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+      var trouve: Uri? = null
+      res.query(
+              col,
+              arrayOf(MediaStore.MediaColumns._ID),
+              MediaStore.MediaColumns.DISPLAY_NAME + " = ? AND " + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?",
+              arrayOf(nom, "Download/echecs-photos%"),
+              null,
+          )
+          ?.use { c -> if (c.moveToFirst()) trouve = ContentUris.withAppendedId(col, c.getLong(0)) }
+      var uri: Uri? = trouve
+      if (uri == null) {
+        val cv = ContentValues()
+        cv.put(MediaStore.MediaColumns.DISPLAY_NAME, nom)
+        cv.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+        cv.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
+        uri = res.insert(col, cv)
+      }
+      val u = uri ?: return
+      val texte = synchronized(journal) { journal.joinToString("\n") }
+      res.openOutputStream(u, "wt")?.use { it.write(texte.toByteArray()) }
+    } catch (e: Exception) {
+      Log.w("Jeu", "journal impossible : " + e.message)
+    }
+  }
   private var relectures = 0
   private var nbEnreg = -1
 
@@ -289,6 +340,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   /** dit = ce qui est prononcé ("|" = petite pause), ecran = ce qui est écrit. */
   private fun parle(dit: String, ecran: String = dit.replace("|", " ")) {
     dernierDit = dit
+    noter("PAROLE : $ecran")
     _etat.update { it.copy(dernierePhrase = ecran) }
     val t = tts ?: return
     val parts = dit.split("|").map { it.trim() }.filter { it.isNotEmpty() }
@@ -300,6 +352,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
   private fun statut(t: String) {
     Log.i(TAG, t)
+    noter("statut : $t")
     _etat.update { it.copy(statut = t) }
   }
 
@@ -429,6 +482,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val phrase = Partie.decrire(b, coup)
     val dite = Partie.dire(b, coup)
     occAvant = Partie.occupation(b)
+    noter("PROPOSE $coup (coups avant : ${coups.size}, derniers : ${coups.takeLast(4)})")
     dernierePropA = SystemClock.elapsedRealtime()
     attendMonCoup = true
     attenteVaine = 0
@@ -555,6 +609,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // de la même façon, donc on les met de côté pour juger si une lecture est crédible
       val attendues = b.count { it != '.' }
       val extras = maxOf(0, choix.vue.nbPieces() - attendues)
+      noter(
+          "lecture : écart=$actuel meilleur=${meilleur.coup}(${meilleur.ecart}) marge=$marge fine=${Math.round(margeF * 10) / 10.0}" +
+              " extras=$extras vues=${choix.vue.nbPieces()} attendues=$attendues attendMonCoup=$attendMonCoup coups=${coups.size} moi=$moi")
       if (forceRelire) {
         relectures++
         if (relectures > 14) {
@@ -655,6 +712,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       }
       coupEnAttente = null
       val phrase = Partie.decrire(b, meilleur.coup)
+      noter("ADVERSAIRE accepté : ${meilleur.coup} (écart=$actuel, marge=$marge, fort=$fort, récent=$recent)")
       coups.add(meilleur.coup)
       sauver()
       if (!proposer("Adversaire : $phrase. ", "", choix.vue)) {
