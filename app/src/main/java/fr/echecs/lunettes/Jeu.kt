@@ -492,7 +492,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val de = (8 - (coup[1] - '0')) * 8 + (coup[0] - 'a')
       val vers = (8 - (coup[3] - '0')) * 8 + (coup[2] - 'a')
       val couleur = if (Character.isUpperCase(b[de])) 1 else 2
-      if (vue.occupant(vers) == couleur) return false
+      if (b[vers] == '.' && vue.occupant(vers) == couleur) return false
     }
     val phrase = Partie.decrire(b, coup)
     val dite = Partie.dire(b, coup)
@@ -754,9 +754,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var svBase: List<String> = emptyList()
 
   /** Suivi de partie par hypothèses, en parallèle de la lecture normale (sert à se recaler après un coup raté). */
+  private var svFen: String? = null
+  private var echecsPropose = 0
+
   private fun suiveurPour(): Suiveur {
     val sv = suiveur
-    if (sv != null && coups.size >= svBase.size) {
+    if (sv != null && svFen == baseFen && coups.size >= svBase.size) {
       val conf = ArrayList<String>(svBase)
       conf.addAll(sv.confirmes())
       var k = 0
@@ -765,7 +768,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       if (k >= minOf(conf.size, coups.size) && k >= svBase.size) return sv
     }
     svBase = ArrayList<String>(coups)
-    var e = Echiquier.depart()
+    svFen = baseFen
+    var e = baseFen?.let { Echiquier.depuisFen(it) } ?: Echiquier.depart()
     for (c in svBase) e = e.jouer(c)
     val nouveau = Suiveur(e)
     suiveur = nouveau
@@ -775,6 +779,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   /** La lecture normale ne comprend plus : si le suivi par hypothèses a une autre version de la partie, je la prends. */
   private fun recalerSurSuiveur(): Boolean {
     val sv = suiveur ?: return false
+    if (svFen != baseFen) return false
     val conf = ArrayList<String>(svBase)
     conf.addAll(sv.confirmes())
     if (conf == coups) return false
@@ -1039,11 +1044,15 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         coups.removeAt(coups.size - 1)
         sauver()
         majPartie()
-        forceRelire = true
-        relectures = 0
-        parle("Je ne suis plus sûr de la position. Je relis l'échiquier. Ne touche à rien.")
-        statut("Je relis l'échiquier pour me recaler…")
+        echecsPropose++
         verifDemandeeA = SystemClock.elapsedRealtime() + 800
+        if (echecsPropose >= 3) {
+          echecsPropose = 0
+          forceRelire = true
+          relectures = 0
+          parle("Je ne suis plus sûr de la position. Je relis l'échiquier. Ne touche à rien.")
+          statut("Je relis l'échiquier pour me recaler…")
+        }
       }
     } catch (ex: Exception) {
       Log.e(TAG, "analyse", ex)
