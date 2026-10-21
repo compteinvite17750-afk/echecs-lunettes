@@ -107,6 +107,11 @@ class MainActivity : ComponentActivity() {
         if (uri != null) jeu.analyserFichier(uri)
       }
 
+  private val choixVideo =
+      registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) jeu.analyserVideo(uri)
+      }
+
   private val choixModele =
       registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) jeu.importerModele(uri)
@@ -124,6 +129,7 @@ class MainActivity : ComponentActivity() {
               camera = { jeu.demarrerCamera(::demandePermission) },
               telephone = ::lancerTelephone,
               photo = { choixPhoto.launch("image/*") },
+              video = { choixVideo.launch("video/*") },
               modele = { choixModele.launch("*/*") },
           )
         }
@@ -148,6 +154,7 @@ fun Ecran(
     camera: () -> Unit,
     telephone: (PreviewView) -> Unit,
     photo: () -> Unit,
+    video: () -> Unit,
     modele: () -> Unit,
 ) {
   val e by jeu.etat.collectAsStateWithLifecycle()
@@ -229,6 +236,7 @@ fun Ecran(
     if (e.details.isNotBlank()) Text(e.details, fontSize = 12.sp)
     e.image?.let { Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = large) }
     OutlinedButton(onClick = photo, modifier = large) { Text("Tester avec une photo de la galerie") }
+    OutlinedButton(onClick = video, modifier = large) { Text("Tester avec une vidéo de la galerie") }
     if (e.modeleManquant) Button(onClick = modele, modifier = large) { Text("Charger le modèle (best.onnx)") }
     Spacer(Modifier.height(40.dp))
   }

@@ -544,6 +544,38 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
   }
 
+  /** Vidéo de la galerie (filmée avec les lunettes ou le téléphone), rejouée en temps réel comme si c'était en direct. */
+  fun analyserVideo(uri: Uri) {
+    if (!occupe.compareAndSet(false, true)) return
+    viewModelScope.launch(Dispatchers.Default) {
+      val r = android.media.MediaMetadataRetriever()
+      try {
+        r.setDataSource(getApplication<Application>(), uri)
+        val dureeMs = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION) ?: "0").toLong()
+        if (dureeMs <= 0) {
+          statut("Vidéo illisible.")
+          return@launch
+        }
+        statut("Lecture de la vidéo (${dureeMs / 1000} s)…")
+        val debut = SystemClock.elapsedRealtime()
+        while (true) {
+          val t = SystemClock.elapsedRealtime() - debut
+          if (t >= dureeMs) break
+          val bmp =
+              r.getScaledFrameAtTime(
+                  t * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 1280, 1280)
+          if (bmp != null) analyser(bmp)
+        }
+        statut("Vidéo terminée.")
+      } catch (e: Exception) {
+        statut("ERREUR vidéo : ${e.message}")
+      } finally {
+        try { r.release() } catch (e: Exception) {}
+        occupe.set(false)
+      }
+    }
+  }
+
   private fun analyser(img: Bitmap) {
     val m = moteur ?: return statut("Stockfish n'est pas prêt.")
     val det = detecteur ?: return statut("Le modèle n'est pas chargé.")
