@@ -74,7 +74,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   companion object {
     private const val TAG = "EchecsLunettes"
     private const val MOUVEMENT = 6f // différence moyenne (0-255) au-dessus de laquelle "ça bouge"
-    private const val CALME_MS = 450L // temps sans mouvement avant de prendre la photo
+    private const val CALME_MS = 150L // temps sans mouvement avant de prendre la photo
     private const val VERIF_MS = 20000L // nouvelle vérification de temps en temps, même sans mouvement
     private const val TEMPS_MOTEUR = 700
   }
@@ -576,7 +576,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         return
       }
       // la caméra vient de bouger et je ne retrouve pas le quadrillage : l'ancien est sans doute faux, j'attends
-      if (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 2500L) {
+      if (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 400L) {
         statut("Je cherche l'échiquier…")
         verifDemandeeA = SystemClock.elapsedRealtime() + 800
         return
@@ -854,7 +854,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val cas = ArrayList<Cas>()
     val ordre = listOf(rotMem) + listOf(0, 90, 180, 270).filter { it != rotMem }
     val plateauImg = trouverPlateau(img, det)
-    if (plateauImg == null || (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 2500L)) {
+    if (plateauImg == null || (!plateauVu && SystemClock.elapsedRealtime() - dernierMouvement < 400L)) {
       statut("Je cherche l'échiquier…")
       return
     }
@@ -1192,9 +1192,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val calme = maintenant - dernierMouvement > CALME_MS
     if (occupe.get()) return
     val verif = verifDemandeeA in 1..maintenant
-    val periodique = maintenant - derniereCapture > (if (telephone) 2500L else VERIF_MS)
+    val periodique = maintenant - derniereCapture > (if (telephone) 600L else VERIF_MS)
     // Téléphone tenu à la main : l'image ne se calme jamais, on regarde quand même de temps en temps.
-    val force = telephone && !calme && maintenant - derniereCapture > 4000L
+    val force = telephone && !calme && maintenant - derniereCapture > 500L
     if (((calme && (aBouge || verif || periodique)) || force) && partieEnCours()) {
       aBouge = false
       verifDemandeeA = 0
