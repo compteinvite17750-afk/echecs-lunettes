@@ -467,6 +467,11 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun proposer(prefixe: String, prefixeDit: String = "", vue: Lecteur.Vue? = null): Boolean {
     val m = moteur ?: return true
     val pos = position()
+    if (lectureVideo) {
+      // analyse d'une vidéo : je ne conseille rien, je dis seulement ce que je vois jouer (blancs ou noirs)
+      if (prefixe.isNotBlank()) parle(prefixe.replace("Adversaire : ", "Coup vu : "))
+      return true
+    }
     val legaux = m.coupsLegaux(pos)
     if (legaux.isEmpty()) {
       val echec = m.etat(pos)[1] == "1"
