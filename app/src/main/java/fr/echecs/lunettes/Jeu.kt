@@ -545,11 +545,24 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   /** Vidéo de la galerie (filmée avec les lunettes ou le téléphone), rejouée en temps réel comme si c'était en direct. */
+  @Volatile private var lectureVideo = false
+
   fun analyserVideo(uri: Uri) {
-    if (!occupe.compareAndSet(false, true)) return
+    statut("Vidéo choisie, je démarre…")
+    lectureVideo = true // la caméra en direct se met en pause pendant la vidéo
     viewModelScope.launch(Dispatchers.Default) {
       val r = android.media.MediaMetadataRetriever()
+      var pris = false
       try {
+        var attente = 0
+        while (!occupe.compareAndSet(false, true)) {
+          kotlinx.coroutines.delay(100)
+          if (++attente > 100) {
+            statut("Je suis occupée, réessaie la vidéo dans un instant.")
+            return@launch
+          }
+        }
+        pris = true
         r.setDataSource(getApplication<Application>(), uri)
         val dureeMs = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION) ?: "0").toLong()
         if (dureeMs <= 0) {
@@ -571,7 +584,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         statut("ERREUR vidéo : ${e.message}")
       } finally {
         try { r.release() } catch (e: Exception) {}
-        occupe.set(false)
+        lectureVideo = false
+        if (pris) occupe.set(false)
       }
     }
   }
@@ -1225,7 +1239,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       dernierMouvement = maintenant
     }
     val calme = maintenant - dernierMouvement > CALME_MS
-    if (occupe.get()) return
+    if (occupe.get() || lectureVideo) return
     val verif = verifDemandeeA in 1..maintenant
     val periodique = maintenant - derniereCapture > (if (telephone) 600L else VERIF_MS)
     // Téléphone tenu à la main : l'image ne se calme jamais, on regarde quand même de temps en temps.
