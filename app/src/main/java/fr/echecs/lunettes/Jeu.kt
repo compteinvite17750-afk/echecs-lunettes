@@ -602,9 +602,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         val nbImages = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT) ?: "0").toIntOrNull() ?: 0
         val cadence = if (nbImages > 0) nbImages * 1000.0 / dureeMs else 30.0
         var idx = 0
+        var dernierBattement = -2000L
         while (true) {
           val t = SystemClock.elapsedRealtime() - debut
           if (t >= dureeMs) break
+          if (t - dernierBattement >= 2000L) {
+            dernierBattement = t
+            noter("VIDEO : battement t=${t / 1000} s image=$idx analyse=${analyseOcc.get()}")
+          }
           val cible = (t * cadence / 1000.0).toInt()
           if (nbImages > 0 && idx >= nbImages) break
           if (idx < cible - 10) idx = cible // en retard : on saute des images (comme une caméra en direct)
@@ -658,12 +663,16 @@ class Jeu(app: Application) : AndroidViewModel(app) {
             val id = suivi.id()
             val img = if (grande.width > 1280) Bitmap.createScaledBitmap(grande, 1280, Math.round(1280f * grande.height / grande.width), true) else grande
             launch {
+              val t0 = SystemClock.elapsedRealtime()
               try {
                 idImg = id
                 analyser(img)
-              } catch (e: Exception) {
+              } catch (e: Throwable) {
                 Log.w(TAG, "analyse vidéo", e)
+                noter("VIDEO : ERREUR analyse : $e")
               } finally {
+                val d = SystemClock.elapsedRealtime() - t0
+                if (d > 1500L) noter("VIDEO : analyse lente (${d} ms)")
                 analyseOcc.set(false)
               }
             }
@@ -674,7 +683,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         while (analyseOcc.get() && att++ < 100) kotlinx.coroutines.delay(100)
         noter("VIDEO : fin, $nbPetites images suivies sur ${nbImages} (cadence ${Math.round(cadence)}/s)")
         statut("Vidéo terminée.")
-      } catch (e: Exception) {
+      } catch (e: Throwable) {
+        noter("VIDEO : ERREUR $e")
         statut("ERREUR vidéo : ${e.message}")
       } finally {
         try { r.release() } catch (e: Exception) {}
