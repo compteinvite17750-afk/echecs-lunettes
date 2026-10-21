@@ -858,7 +858,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         if (actuel - extras >= 4) {
           incertain++
           if (incertain == 3 || incertain == 8) doutePlateau = true // le quadrillage est peut-être décalé
-          if (lectureVideo && incertain >= 2 && rattraper(choix.vue, b, legaux, actuel, extras)) {
+          if (lectureVideo && incertain >= 2 && rattraper(choix.vue, b, legaux, choix.r.obs, actuel, extras)) {
             incertain = 0
             return
           }
@@ -1276,25 +1276,40 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private var rattrapeVu: String? = null
 
   /**
-   * Vidéo seulement (celui qui filme joue les deux camps, parfois deux coups d'affilée sans pause) :
-   * si aucun coup seul ne colle, je cherche une suite de deux coups ; elle doit être vue deux fois de suite.
+   * Vidéo seulement (celui qui filme joue les deux camps, souvent plusieurs coups d'affilée) :
+   * si aucun coup seul ne colle, je cherche une suite de 1 à 4 coups qui explique ce que je vois.
+   * Seuls les coups qui touchent des cases où ça ne colle pas sont essayés ; la suite doit être vue deux fois de suite.
    */
-  private fun rattraper(vue: Lecteur.Vue, b: CharArray, legaux: List<String>, actuel: Int, extras: Int): Boolean {
+  private fun rattraper(vue: Lecteur.Vue, b: CharArray, legaux: List<String>, obs: IntArray, actuel: Int, extras: Int): Boolean {
     val m = moteur ?: return false
-    class Cand(val ecart: Int, val seq: List<String>, val occ: IntArray)
-    val cands = ArrayList<Cand>()
-    for (m1 in legaux) {
-      val b1 = Partie.apres(b, m1)
-      val suite = ArrayList<String>(coups)
-      suite.add(m1)
-      for (m2 in m.coupsLegaux(positionDe(suite))) {
-        val b2 = Partie.apres(b1, m2)
-        cands.add(Cand(vue.ecart(b2), listOf(m1, m2), Partie.occupation(b2)))
+    if (vue.nbPieces() < 20) return false
+    class Noeud(val b: CharArray, val seq: List<String>, val touche: Set<Int>, val ecart: Int, val occ: IntArray)
+    fun cases(mv: String): IntArray =
+        intArrayOf((8 - (mv[1] - '0')) * 8 + (mv[0] - 'a'), (8 - (mv[3] - '0')) * 8 + (mv[2] - 'a'))
+    val occ0 = Partie.occupation(b)
+    val d0 = HashSet<Int>()
+    for (i in 0 until 64) if (occ0[i] != obs[i]) d0.add(i)
+    val resultats = ArrayList<Noeud>()
+    var faisceau: List<Noeud> = listOf(Noeud(b, emptyList(), d0, actuel, occ0))
+    for (prof in 1..4) {
+      val suivants = ArrayList<Noeud>()
+      for (n in faisceau) {
+        val l = if (prof == 1) legaux else m.coupsLegaux(positionDe(ArrayList<String>(coups).apply { addAll(n.seq) }))
+        for (mv in l) {
+          val c = cases(mv)
+          if (!(c[0] in n.touche || c[1] in n.touche)) continue
+          val bn = Partie.apres(n.b, mv)
+          suivants.add(Noeud(bn, n.seq + mv, n.touche + c[0] + c[1], vue.ecart(bn), Partie.occupation(bn)))
+        }
       }
+      suivants.sortBy { it.ecart }
+      resultats.addAll(suivants)
+      faisceau = suivants.take(8)
+      if (faisceau.isEmpty()) break
     }
-    cands.sortBy { it.ecart }
-    val best = cands.firstOrNull() ?: return false
-    val autre = cands.firstOrNull { !it.occ.contentEquals(best.occ) }
+    resultats.sortWith(compareBy({ it.ecart }, { it.seq.size }))
+    val best = resultats.firstOrNull() ?: return false
+    val autre = resultats.firstOrNull { !it.occ.contentEquals(best.occ) }
     val marge = (autre?.ecart ?: 99) - best.ecart
     if (best.ecart - extras > 3 || marge < 2 || actuel - best.ecart < 4) {
       rattrapeVu = null
@@ -1308,7 +1323,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     rattrapeVu = null
     var bb = b
     for (c in best.seq) {
-      noter("COUP VU : " + Partie.decrire(bb, c) + " (deux coups d'affilée)")
+      noter("COUP VU : " + Partie.decrire(bb, c) + " (rattrapage)")
       bb = Partie.apres(bb, c)
       coups.add(c)
     }
