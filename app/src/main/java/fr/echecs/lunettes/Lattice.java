@@ -392,7 +392,26 @@ public final class Lattice {
      * Cherche l'échiquier. pieds : pieds des pièces détectées (pixels de l'image grise), peut être vide.
      * Retourne null si rien de crédible.
      */
+    /** Bonus (0..40) pour une fenêtre proche du plateau trouvé juste avant : le plateau ne saute pas d'une case entre deux photos. */
+    private static double bonusAvant(double[][] q, double[][] avant) {
+        if (avant == null || avant.length < 4) return 0;
+        double cell = (Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]) + Math.hypot(q[3][0] - q[0][0], q[3][1] - q[0][1])) / 16.0;
+        if (!(cell > 1e-6)) return 0;
+        double s = 0;
+        for (int i = 0; i < 4; i++) {
+            double dm = 1e18;
+            for (double[] c : q) dm = Math.min(dm, Math.hypot(c[0] - avant[i][0], c[1] - avant[i][1]));
+            s += dm;
+        }
+        double d = s / 4.0 / cell;
+        return 40.0 * Math.max(0.0, 1.0 - d);
+    }
+
     public static Res trouve(Coins.Gris g, List<double[]> pieds) {
+        return trouve(g, pieds, null);
+    }
+
+    public static Res trouve(Coins.Gris g, List<double[]> pieds, double[][] avant) {
         double sig = Math.max(1.2, 2.0 * g.w / 1000.0);
         double[][] P = selles(g, sig);
         int n = P.length;
@@ -483,11 +502,12 @@ public final class Lattice {
                 }
                 for (int[] w : fenetres(cur.r, cur.ok)) {
                     if (!sain(cur.H, w[1], w[2], g.w, g.h)) continue;
-                    double sc = w[0] + scorePieds(cur.H, w[1], w[2], pieds);
+                    double[][] qw = coinsDe(cur.H, w[1], w[2]);
+                    double sc = w[0] + scorePieds(cur.H, w[1], w[2], pieds) + bonusAvant(qw, avant);
                     if (sc > bestSc) {
                         bestSc = sc;
                         bestV = w[0];
-                        bestQ = coinsDe(cur.H, w[1], w[2]);
+                        bestQ = qw;
                     }
                 }
             }

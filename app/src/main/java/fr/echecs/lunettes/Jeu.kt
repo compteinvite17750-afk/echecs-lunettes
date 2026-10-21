@@ -776,7 +776,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val s = g.w.toDouble() / img.width
       val pieds = ArrayList<DoubleArray>()
       for (p in pts) if (p.conf > 0.4) pieds.add(doubleArrayOf(p.x * s, p.y * s))
-      val res = Lattice.trouve(g, pieds)
+      // le plateau ne saute pas d'une case entre deux photos : on favorise la position trouvée juste avant
+      val avant: Array<DoubleArray>? =
+          if (sur == null) null else Array(4) { doubleArrayOf(sur[it][0] * g.w, sur[it][1] * g.h) }
+      val res = Lattice.trouve(g, pieds, avant)
       if (res != null && res.v >= Lattice.SEUIL) {
         val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
         plateauSur = fr
