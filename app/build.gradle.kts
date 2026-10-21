@@ -19,9 +19,9 @@ android {
     versionName = vNum
     ndk { abiFilters += "arm64-v8a" }
 
-    // Mode développeur Meta : pas besoin d'identifiants
-    manifestPlaceholders["mwdat_application_id"] = "0"
-    manifestPlaceholders["mwdat_client_token"] = "0"
+    // Identifiants de l'appli enregistrée dans le Wearables Developer Center de Meta
+    manifestPlaceholders["mwdat_application_id"] = "1082721304535859"
+    manifestPlaceholders["mwdat_client_token"] = "AR|1082721304535859|778fc4b09a65289f881f65ce833bf3df"
   }
 
   signingConfigs {
