@@ -569,6 +569,17 @@ class Jeu(app: Application) : AndroidViewModel(app) {
           }
         }
         pris = true
+        // la vidéo repart d'une partie neuve : l'appli reconnaît seule la position de départ
+        coups.clear()
+        baseFen = null
+        partieActive = false
+        autoReprise = true
+        attendMonCoup = false
+        coupEnAttente = null
+        incertain = 0
+        petitEcart = 0
+        sauver()
+        majPartie()
         r.setDataSource(getApplication<Application>(), uri)
         val dureeMs = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION) ?: "0").toLong()
         if (dureeMs <= 0) {
