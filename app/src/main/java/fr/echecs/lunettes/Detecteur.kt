@@ -43,6 +43,9 @@ class Detecteur(modele: ByteArray) {
    * coinsPx : haut-gauche, haut-droit, bas-droit, bas-gauche en pixels, dans le repère "blancs en bas"
    * (déjà retournés si on joue les noirs). Retourne l'occupation des 64 cases.
    */
+  private class Memo(val img: Bitmap, val cle: IntArray, val sortie: Array<FloatArray>)
+  @Volatile private var dernierMemo: Memo? = null
+
   fun detecte(img: Bitmap, coinsPx: Array<DoubleArray>): Resultat? {
     Coins.homographie(coinsPx, Coins.SQ) ?: return null
 
@@ -60,30 +63,41 @@ class Detecteur(modele: ByteArray) {
     if (cw < 32 || ch < 32) return null
     val zone = Bitmap.createBitmap(img, cx0, cy0, cw, ch)
 
-    // Image 640x640 (comme à l'entraînement), fond gris
+    // même image et même zone (ex. : les 4 orientations du plateau) : le détecteur donne le même résultat, je le réutilise
+    val cle = intArrayOf(cx0, cy0, cw, ch)
     val s = 640.0 / max(cw, ch)
-    val rw = max(1, (cw * s).toInt())
-    val rh = max(1, (ch * s).toInt())
-    val petit = Bitmap.createScaledBitmap(zone, rw, rh, true)
-    val px = IntArray(rw * rh)
-    petit.getPixels(px, 0, rw, 0, 0, rw, rh)
-    val plan = 640 * 640
-    val data = FloatArray(3 * plan) { 114f / 255f }
-    for (y in 0 until rh) {
-      for (x in 0 until rw) {
-        val c = px[y * rw + x]
-        val i = y * 640 + x
-        data[i] = ((c shr 16) and 255) / 255f
-        data[plan + i] = ((c shr 8) and 255) / 255f
-        data[2 * plan + i] = (c and 255) / 255f
-      }
-    }
+    val memo = dernierMemo
     val sortie: Array<FloatArray> =
-        OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, 640, 640)).use { t ->
-          session.run(mapOf(nomEntree to t)).use { r ->
-            @Suppress("UNCHECKED_CAST")
-            (r[0].value as Array<Array<FloatArray>>)[0]
+        if (memo != null && memo.img === img && memo.cle.contentEquals(cle)) memo.sortie
+        else {
+        // Image 640x640 (comme à l'entraînement), fond gris
+        val rw = max(1, (cw * s).toInt())
+        val rh = max(1, (ch * s).toInt())
+        val petit = Bitmap.createScaledBitmap(zone, rw, rh, true)
+        val px = IntArray(rw * rh)
+        petit.getPixels(px, 0, rw, 0, 0, rw, rh)
+        val plan = 640 * 640
+        val data = FloatArray(3 * plan) { 114f / 255f }
+        for (y in 0 until rh) {
+          for (x in 0 until rw) {
+            val c = px[y * rw + x]
+            val i = y * 640 + x
+            data[i] = ((c shr 16) and 255) / 255f
+            data[plan + i] = ((c shr 8) and 255) / 255f
+            data[2 * plan + i] = (c and 255) / 255f
           }
+        }
+        val calc: Array<FloatArray> =
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, 640, 640)).use { t ->
+              session.run(mapOf(nomEntree to t)).use { r ->
+                @Suppress("UNCHECKED_CAST")
+                (r[0].value as Array<Array<FloatArray>>)[0]
+              }
+            }
+    
+    
+        dernierMemo = Memo(img, cle, calc)
+        calc
         }
 
     val nc = sortie.size - 4
