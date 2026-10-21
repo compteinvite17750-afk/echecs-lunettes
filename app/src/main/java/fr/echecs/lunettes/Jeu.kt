@@ -348,6 +348,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     dernierDit = dit
     noter("PAROLE : $ecran")
     _etat.update { it.copy(dernierePhrase = ecran) }
+    if (lectureVideo) return // analyse d'une vidéo : silence, tout va dans le journal
     val t = tts ?: return
     val parts = dit.split("|").map { it.trim() }.filter { it.isNotEmpty() }
     parts.forEachIndexed { i, s ->
@@ -469,7 +470,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val pos = position()
     if (lectureVideo) {
       // analyse d'une vidéo : je ne conseille rien, je dis seulement ce que je vois jouer (blancs ou noirs)
-      if (prefixe.isNotBlank()) parle(prefixe.replace("Adversaire : ", "Coup vu : "))
+      if (prefixe.isNotBlank()) noter("COUP VU : " + prefixe.replace("Adversaire : ", "").trim())
       return true
     }
     val legaux = m.coupsLegaux(pos)

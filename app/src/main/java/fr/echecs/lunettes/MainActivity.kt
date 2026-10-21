@@ -176,6 +176,15 @@ fun Ecran(
   ) {
     Spacer(Modifier.height(24.dp))
     Text("Échecs Lunettes", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    val numVersion =
+        remember {
+          try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
+          } catch (ex: Exception) {
+            "?"
+          }
+        }
+    Text("Version $numVersion", fontSize = 14.sp)
     Text(e.statut, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     if (e.dernierePhrase.isNotBlank()) Text("🔊 " + e.dernierePhrase, fontSize = 16.sp)
     if (e.enAnalyse) Text("Analyse en cours…")

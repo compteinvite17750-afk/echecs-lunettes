@@ -14,8 +14,9 @@ android {
     applicationId = "fr.echecs.lunettes"
     minSdk = 29
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    val vNum = (project.findProperty("vNum") ?: "0").toString()
+    versionCode = vNum.toIntOrNull() ?: 1
+    versionName = vNum
     ndk { abiFilters += "arm64-v8a" }
 
     // Mode développeur Meta : pas besoin d'identifiants

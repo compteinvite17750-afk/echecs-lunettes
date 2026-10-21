@@ -48,7 +48,7 @@ jobs:
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
+          ./gradlew assembleDebug -PvNum=${{ github.run_number }} --no-daemon 2>&1 | tee build.log
 
       - name: Publier l'application
         uses: softprops/action-gh-release@v2
