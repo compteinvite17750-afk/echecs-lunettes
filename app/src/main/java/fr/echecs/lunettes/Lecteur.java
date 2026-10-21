@@ -207,7 +207,7 @@ public final class Lecteur {
         }
 
         /** {erreurs, somme des distances} entre ce qu'on voit et une position attendue (lettres FEN). */
-        double[] compare(char[] att) {
+        public double[] compare(char[] att) {
             int nAtt = 0;
             for (int s = 0; s < 64; s++) if (att[s] != '.') nAtt++;
             List<double[]> paires = new ArrayList<>();
@@ -216,11 +216,11 @@ public final class Lecteur {
                     char a = att[s];
                     if (a == '.') continue;
                     int c = Character.isUpperCase(a) ? 1 : 2;
-                    if (c != col[i]) continue;
                     double du = u[i] - (s % 8 + 0.5), dv = v[i] - (s / 8 + 0.5);
                     double d = Math.sqrt(du * du + dv * dv);
                     if (d > RAYON) continue;
-                    double mal = Character.toLowerCase(a) == typ[i] ? 0 : 1;
+                    // une couleur mal lue (ombre, soleil) coûte 1 erreur au lieu de 2 (une absente + une en trop)
+                    double mal = c != col[i] ? 2 : (Character.toLowerCase(a) == typ[i] ? 0 : 1);
                     paires.add(new double[]{d + 0.4 * mal, i, s, mal, d});
                 }
             }

@@ -641,9 +641,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // juste après que je t'ai donné ton coup, l'adversaire n'a pas eu le temps de répondre : on est plus exigeant
       // (un coup « fantôme » dû à une main ou une ombre ne doit pas me faire annoncer un 2e coup de suite)
       val recent = SystemClock.elapsedRealtime() - dernierePropA < 6000L
+      // le coup doit coller mieux que « personne n'a joué » : en nombre d'erreurs, ou (à égalité) en précision
+      val cActuel = choix.vue.compare(b)
+      val actuelFin = cActuel[0] + cActuel[1]
+      val mieuxQueRien =
+          actuel - meilleur.ecart >= (if (recent) 2 else 1) ||
+              actuelFin - meilleur.fin >= (if (recent) 1.6 else 0.7)
       val plausible =
-          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) &&
-              actuel - meilleur.ecart >= (if (recent) 2 else 1)
+          meilleur.ecart - extras <= 4 && (marge >= 2 || (marge >= 1 && margeF >= 0.25)) && mieuxQueRien
       if (attendMonCoup) {
         val av = occAvant
         // il a joué son coup : la photo ressemble plus à la position actuelle qu'à celle d'avant,
