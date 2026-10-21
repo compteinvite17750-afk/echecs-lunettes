@@ -941,13 +941,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     doutePlateau = false
     // le suivi image par image donne déjà la position du plateau sur cette image
     val qs: Array<DoubleArray>? = if (idImg >= 0L && suivi.sain()) suivi.quadA(idImg) else null
-    // (le suivi reste la référence tant que les lectures sont bonnes ; en cas de doute on refait la recherche à neuf)
-    if (!doute && qs != null && partieActive) {
-      plateauSur = qs
-      plateauSurA = maintenant
-      plateauVu = true
-      return qs
-    }
+    // (le suivi sert entre deux recherches ; le quadrillage trouvé le recale à chaque fois, car il est plus précis)
     // sur trépied : on ne refait pas toute la recherche à chaque image
     // (pas de raccourci si ça bouge : le plateau a pu changer de place dans l'image)
     if (!doute && sur != null && telephone && maintenant - plateauSurA < 6000L && maintenant - dernierMouvement > 1500L) {
@@ -969,20 +963,24 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       // le plateau ne saute pas d'une case entre deux photos : on favorise la position trouvée juste avant
       val ref = qs ?: sur
       val avant: Array<DoubleArray>? =
-          if (doute || ref == null) null else Array(4) { doubleArrayOf(ref[it][0] * g.w, ref[it][1] * g.h) }
+          if (doute || ref == null || contredit > 0) null else Array(4) { doubleArrayOf(ref[it][0] * g.w, ref[it][1] * g.h) }
       val res = Lattice.trouve(g, if (doute) ArrayList<DoubleArray>() else pieds, avant)
       // au départ d'une partie, toutes les pièces sont sur le plateau : un quadrillage qui n'en contient que la moitié est faux
       if (res != null && res.v >= Lattice.SEUIL &&
           (partieActive || doute || pieds.size < 12 || fractionDedans(res.px, pieds) >= 0.6)) {
-        val fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
+        var fr = Array(4) { doubleArrayOf(res.px[it][0] / g.w, res.px[it][1] / g.h) }
+        if (qs != null) fr = aligner(fr, qs)
         if (qs != null && !doute && ecartCoins(fr, qs, img) > 0.7) {
-          // le quadrillage cherché contredit le suivi (décalé d'une case ?) : je garde le suivi et je réessaierai
-          dernierAncrage = maintenant - 1200L
-          plateauSur = qs
-          plateauSurA = maintenant
-          plateauVu = true
-          return qs
+          // le quadrillage contredit le suivi : une fois, je garde le suivi ; deux fois de suite, le suivi a dérivé
+          contredit++
+          if (contredit < 2) {
+            plateauSur = qs
+            plateauSurA = maintenant
+            plateauVu = true
+            return qs
+          }
         }
+        contredit = 0
         plateauSur = fr
         plateauSurA = maintenant
         plateauVu = true
@@ -1002,6 +1000,23 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
     plateauVu = false
     return sur
+  }
+
+  private var contredit = 0
+
+  /** Remet les 4 coins de a dans l'ordre de b (décalage circulaire le plus proche). */
+  private fun aligner(a: Array<DoubleArray>, b: Array<DoubleArray>): Array<DoubleArray> {
+    var meilleur = 0
+    var mini = Double.MAX_VALUE
+    for (d in 0 until 4) {
+      var t = 0.0
+      for (i in 0 until 4) {
+        val k = (i + d) % 4
+        t += Math.hypot(a[k][0] - b[i][0], a[k][1] - b[i][1])
+      }
+      if (t < mini) { mini = t; meilleur = d }
+    }
+    return Array(4) { a[(it + meilleur) % 4] }
   }
 
   /** Écart maximal entre deux positions du plateau, en nombre de cases (on essaie les 4 décalages de coins). */
