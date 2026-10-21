@@ -1241,7 +1241,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val calme = maintenant - dernierMouvement > CALME_MS
     if (occupe.get() || lectureVideo) return
     val verif = verifDemandeeA in 1..maintenant
-    val periodique = maintenant - derniereCapture > (if (telephone) 600L else VERIF_MS)
+    val periodique = maintenant - derniereCapture > (if (telephone) (if (maintenant - dernierMouvement > 3000L) 2500L else 600L) else VERIF_MS)
     // Téléphone tenu à la main : l'image ne se calme jamais, on regarde quand même de temps en temps.
     val force = telephone && !calme && maintenant - derniereCapture > 500L
     if (((calme && (aBouge || verif || periodique)) || force) && partieEnCours()) {
