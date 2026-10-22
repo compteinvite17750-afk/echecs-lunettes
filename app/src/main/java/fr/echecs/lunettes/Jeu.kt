@@ -741,7 +741,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     val tFin = SystemClock.elapsedRealtime()
     noter(
         "suiveur : vues=$nb meilleur=${meil.historique().takeLast(3)} confirmés=${sv.confirmes().size}" +
-            " | ms : plateau=$tPlateau modèle=${det.tpsOrt} prépa=${det.tpsPrep} suiveur=${tFin - tSv} total=${tFin - tDeb}")
+            " | ms : plateau=$tPlateau modèle=${det.tpsOrt} prépa=${det.tpsPrep} suiveur=${tFin - tSv} total=${tFin - tDeb} | $diagQs")
     val conf = sv.confirmes()
     if (conf != coups) {
       val avant = ArrayList<String>(coups)
@@ -1128,11 +1128,16 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     }
     // le suivi image par image tient le plateau et le quadrillage a été retrouvé il y a peu : je saute la recherche
     // du quadrillage (la partie la plus lente de l'analyse), je la refais seulement toutes les ~2,5 s pour recaler
-    if (!doute && qs != null && contredit == 0 && partieActive && maintenant - dernierAncrage < 2500L) {
-      plateauSur = qs
-      plateauSurA = maintenant
-      plateauVu = true
-      return qs
+    diagQs = if (qs == null) "qs=non(idImg=$idImg sain=${suivi.sain()})" else "qs=ok contredit=$contredit age=${maintenant - dernierAncrage}"
+    if (!doute && qs != null && partieActive) {
+      sautes++
+      // je refais la recherche du quadrillage seulement 1 fois sur 3 (ou si elle est très ancienne)
+      if (sautes % 3 != 0 && maintenant - dernierAncrage < 6000L) {
+        plateauSur = qs
+        plateauSurA = maintenant
+        plateauVu = true
+        return qs
+      }
     }
     try {
       val g = Detecteur.gris1000(img)
@@ -1190,6 +1195,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   }
 
   private var contredit = 0
+  private var sautes = 0
+  @Volatile private var diagQs = ""
 
   /** Remet les 4 coins de a dans l'ordre de b (décalage circulaire le plus proche). */
   private fun aligner(a: Array<DoubleArray>, b: Array<DoubleArray>): Array<DoubleArray> {
