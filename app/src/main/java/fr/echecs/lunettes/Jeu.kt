@@ -1778,6 +1778,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
 
   private fun analyserTel(img: ImageProxy) {
     try {
+      // pendant la lecture d'une vidéo, la caméra ne doit pas alimenter le suivi (sinon les formes d'image alternent et le suivi se remet à zéro)
+      if (lectureVideo) return
       val rot = img.imageInfo.rotationDegrees
       val maintenant = SystemClock.elapsedRealtime()
       val plan = img.planes[0]
