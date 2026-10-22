@@ -712,7 +712,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
    */
   private fun analyserAvecSuiveur(img: Bitmap, det: Detecteur) {
     val sv = suiveur ?: return
+    val tDeb = SystemClock.elapsedRealtime()
     val plateauImg = trouverPlateau(img, det)
+    val tPlateau = SystemClock.elapsedRealtime() - tDeb
     if (plateauImg == null || !plateauVu) {
       noter("suiveur : image ignorée (pas de plateau)")
       return
@@ -733,9 +735,13 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       noter("suiveur : image ignorée (pièces vues : $nb)")
       return
     }
+    val tSv = SystemClock.elapsedRealtime()
     sv.observe(vue)
     val meil = sv.meilleur()
-    noter("suiveur : vues=$nb meilleur=${meil.historique().takeLast(3)} confirmés=${sv.confirmes().size}")
+    val tFin = SystemClock.elapsedRealtime()
+    noter(
+        "suiveur : vues=$nb meilleur=${meil.historique().takeLast(3)} confirmés=${sv.confirmes().size}" +
+            " | ms : plateau=$tPlateau modèle=${det.tpsOrt} prépa=${det.tpsPrep} suiveur=${tFin - tSv} total=${tFin - tDeb}")
     val conf = sv.confirmes()
     if (conf != coups) {
       val avant = ArrayList<String>(coups)
@@ -801,6 +807,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun analyser(img: Bitmap) {
     val m = moteur ?: return statut("Stockfish n'est pas prêt.")
     val det = detecteur ?: return statut("Le modèle n'est pas chargé.")
+    val tDebA = SystemClock.elapsedRealtime()
     _etat.update { it.copy(enAnalyse = true) }
     try {
       if (!partieActive) {
@@ -890,7 +897,8 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val extras = maxOf(0, choix.vue.nbPieces() - attendues)
       noter(
           "lecture : écart=$actuel meilleur=${meilleur.coup}(${meilleur.ecart}) marge=$marge fine=${Math.round(margeF * 10) / 10.0}" +
-              " extras=$extras vues=${choix.vue.nbPieces()} attendues=$attendues attendMonCoup=$attendMonCoup coups=${coups.size} moi=$moi")
+              " extras=$extras vues=${choix.vue.nbPieces()} attendues=$attendues attendMonCoup=$attendMonCoup coups=${coups.size} moi=$moi" +
+              " | ms=${SystemClock.elapsedRealtime() - tDebA} modèle=${det.tpsOrt} prépa=${det.tpsPrep}")
       if (forceRelire) {
         relectures++
         if (relectures > 14) {

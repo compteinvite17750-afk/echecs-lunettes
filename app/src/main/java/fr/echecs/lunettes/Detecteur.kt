@@ -20,7 +20,16 @@ import kotlin.math.min
 class Detecteur(modele: ByteArray) {
 
   private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-  private val session: OrtSession = env.createSession(modele, OrtSession.SessionOptions())
+  private val session: OrtSession =
+      env.createSession(
+          modele,
+          OrtSession.SessionOptions().also {
+            // 4 fils = les gros coeurs du téléphone (plus rapide que tous les coeurs, petits compris)
+            it.setIntraOpNumThreads(4)
+            it.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+          })
+  @Volatile var tpsPrep = 0L // ms passées à préparer l'image (dernière détection)
+  @Volatile var tpsOrt = 0L // ms passées dans le modèle (dernière détection)
   private val nomEntree: String = session.inputNames.first()
 
   /** Pied d'une pièce détectée : position dans l'image (pixels) et luminosité. */
@@ -71,6 +80,7 @@ class Detecteur(modele: ByteArray) {
         if (memo != null && memo.img === img && memo.cle.contentEquals(cle)) memo.sortie
         else {
         // Image 640x640 (comme à l'entraînement), fond gris
+        val tA = System.nanoTime()
         val rw = max(1, (cw * s).toInt())
         val rh = max(1, (ch * s).toInt())
         val petit = Bitmap.createScaledBitmap(zone, rw, rh, true)
@@ -87,6 +97,7 @@ class Detecteur(modele: ByteArray) {
             data[2 * plan + i] = (c and 255) / 255f
           }
         }
+        val tB = System.nanoTime()
         val calc: Array<FloatArray> =
         OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, 640, 640)).use { t ->
               session.run(mapOf(nomEntree to t)).use { r ->
@@ -96,6 +107,8 @@ class Detecteur(modele: ByteArray) {
             }
     
     
+        tpsPrep = (tB - tA) / 1000000L
+        tpsOrt = (System.nanoTime() - tB) / 1000000L
         dernierMemo = Memo(img, cle, calc)
         calc
         }
