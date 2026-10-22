@@ -587,6 +587,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         sauver()
         majPartie()
         suivi.reset()
+        quadAncre = null
         rotVideoSure = false
         votes.clear()
         suiveur = Suiveur(Echiquier.depart())
@@ -610,14 +611,15 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         var dernierBattement = -2000L
         while (true) {
           val t = SystemClock.elapsedRealtime() - debut
-          if (t >= dureeMs) break
+          if (t >= dureeMs && (nbImages <= 0 || t >= 3L * dureeMs)) break
           if (t - dernierBattement >= 2000L) {
             dernierBattement = t
             noter("VIDEO : battement t=${t / 1000} s image=$idx analyse=${analyseOcc.get()}")
           }
           val cible = (t * cadence / 1000.0).toInt()
           if (nbImages > 0 && idx >= nbImages) break
-          if (idx < cible - 10) idx = cible // en retard : on saute des images (comme une caméra en direct)
+          // en retard : on ne saute plus d'images (le suivi a besoin de toutes les images ; la vidéo passe un peu moins vite que la réalité)
+          if (nbImages <= 0 && idx < cible - 10) idx = cible
           if (idx > cible + 1) {
             kotlinx.coroutines.delay(10)
             continue
@@ -1132,7 +1134,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     if (!doute && qs != null && partieActive) {
       sautes++
       // je refais la recherche du quadrillage seulement 1 fois sur 3 (ou si elle est très ancienne)
-      if (sautes % 3 != 0 && maintenant - dernierAncrage < 6000L) {
+      val qa = quadAncre
+      var depl = 1.0
+      if (qa != null) {
+        depl = 0.0
+        for (i in 0 until 4) depl = Math.max(depl, Math.hypot(qs[i][0] - qa[i][0], qs[i][1] - qa[i][1]))
+      }
+      // simulation sur la vidéo des lunettes : dès que le plateau a bougé de plus de ~2 % de l'image depuis le dernier quadrillage trouvé, le suivi seul dérive trop (jusqu'à une demi-case) : je refais la recherche
+      if (depl < 0.02 && maintenant - dernierAncrage < 3000L) {
         plateauSur = qs
         plateauSurA = maintenant
         plateauVu = true
@@ -1177,7 +1186,10 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         plateauSurA = maintenant
         plateauVu = true
         dernierAncrage = maintenant
-        if (idImg >= 0L) suivi.ancre(idImg, fr)
+        if (idImg >= 0L) {
+          suivi.ancre(idImg, fr)
+          quadAncre = fr
+        }
         return fr
       }
     } catch (e: Exception) {
@@ -1770,6 +1782,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private val suivi = Suivi() // suit le plateau d'une image à l'autre (quadrillage collé pendant les mouvements)
   @Volatile private var idImg = -1L // numéro d'image du suivi correspondant à l'image analysée (-1 = aucun)
   @Volatile private var dernierAncrage = 0L
+  @Volatile private var quadAncre: Array<DoubleArray>? = null
   @Volatile private var dernierSuivi = 0L
   @Volatile private var imageDirectId = -1L
   @Volatile private var analyseCam: ImageAnalysis? = null
