@@ -19,7 +19,7 @@ public final class Coins {
     public static final class Resultat {
         public final double[][] coins;
         public final double score;
-        Resultat(double[][] c, double s) { coins = c; score = s; }
+        public Resultat(double[][] c, double s) { coins = c; score = s; }
     }
 
     /** Image en niveaux de gris (valeurs 0..255). */

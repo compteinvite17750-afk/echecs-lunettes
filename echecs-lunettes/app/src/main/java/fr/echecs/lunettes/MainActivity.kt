@@ -31,6 +31,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +107,11 @@ class MainActivity : ComponentActivity() {
         if (uri != null) jeu.analyserFichier(uri)
       }
 
+  private val choixVideo =
+      registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) jeu.analyserVideo(uri)
+      }
+
   private val choixModele =
       registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) jeu.importerModele(uri)
@@ -122,6 +129,7 @@ class MainActivity : ComponentActivity() {
               camera = { jeu.demarrerCamera(::demandePermission) },
               telephone = ::lancerTelephone,
               photo = { choixPhoto.launch("image/*") },
+              video = { choixVideo.launch("video/*") },
               modele = { choixModele.launch("*/*") },
           )
         }
@@ -146,6 +154,7 @@ fun Ecran(
     camera: () -> Unit,
     telephone: (PreviewView) -> Unit,
     photo: () -> Unit,
+    video: () -> Unit,
     modele: () -> Unit,
 ) {
   val e by jeu.etat.collectAsStateWithLifecycle()
@@ -155,6 +164,11 @@ fun Ecran(
   val vue = remember {
     PreviewView(ctx).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
   }
+  // La caméra du téléphone démarre toute seule à l'ouverture de l'application.
+  LaunchedEffect(Unit) {
+    delay(1500)
+    telephone(vue)
+  }
 
   Column(
       modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -162,6 +176,15 @@ fun Ecran(
   ) {
     Spacer(Modifier.height(24.dp))
     Text("Échecs Lunettes", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    val numVersion =
+        remember {
+          try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
+          } catch (ex: Exception) {
+            "?"
+          }
+        }
+    Text("Version $numVersion", fontSize = 14.sp)
     Text(e.statut, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     if (e.dernierePhrase.isNotBlank()) Text("🔊 " + e.dernierePhrase, fontSize = 16.sp)
     if (e.enAnalyse) Text("Analyse en cours…")
@@ -196,6 +219,9 @@ fun Ecran(
       Button(onClick = { jeu.capturer() }) { Text("Analyser maintenant") }
       OutlinedButton(onClick = { jeu.repeter() }) { Text("Répéter") }
     }
+    OutlinedButton(onClick = { jeu.changerStyle() }, modifier = large) {
+      Text("Changer la façon de dire les cases")
+    }
     OutlinedButton(onClick = { jeu.annuler() }, modifier = large) {
       Text("Annuler le dernier coup adverse")
     }
@@ -219,6 +245,7 @@ fun Ecran(
     if (e.details.isNotBlank()) Text(e.details, fontSize = 12.sp)
     e.image?.let { Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = large) }
     OutlinedButton(onClick = photo, modifier = large) { Text("Tester avec une photo de la galerie") }
+    OutlinedButton(onClick = video, modifier = large) { Text("Tester avec une vidéo de la galerie") }
     if (e.modeleManquant) Button(onClick = modele, modifier = large) { Text("Charger le modèle (best.onnx)") }
     Spacer(Modifier.height(40.dp))
   }

@@ -20,12 +20,24 @@ import kotlin.math.min
 class Detecteur(modele: ByteArray) {
 
   private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-  private val session: OrtSession = env.createSession(modele, OrtSession.SessionOptions())
+  private val session: OrtSession =
+      env.createSession(
+          modele,
+          OrtSession.SessionOptions().also {
+            // 4 fils = les gros coeurs du téléphone (plus rapide que tous les coeurs, petits compris)
+            it.setIntraOpNumThreads(4)
+            it.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+          })
+  @Volatile var tpsPrep = 0L // ms passées à préparer l'image (dernière détection)
+  @Volatile var tpsOrt = 0L // ms passées dans le modèle (dernière détection)
   private val nomEntree: String = session.inputNames.first()
 
-  class Resultat(val obs: IntArray, val nbPieces: Int)
+  /** Pied d'une pièce détectée : position dans l'image (pixels) et luminosité. */
+  class Pt(val x: Double, val y: Double, val lum: Double, val cls: Int = 0, val conf: Double = 0.0)
 
-  private class Boite(val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float) {
+  class Resultat(val obs: IntArray, val nbPieces: Int, val pts: List<Pt> = emptyList())
+
+  private class Boite(val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float, val cls: Int = 0) {
     fun iou(o: Boite): Float {
       val x1 = max(cx - w / 2, o.cx - o.w / 2)
       val y1 = max(cy - h / 2, o.cy - o.h / 2)
@@ -40,8 +52,11 @@ class Detecteur(modele: ByteArray) {
    * coinsPx : haut-gauche, haut-droit, bas-droit, bas-gauche en pixels, dans le repère "blancs en bas"
    * (déjà retournés si on joue les noirs). Retourne l'occupation des 64 cases.
    */
+  private class Memo(val img: Bitmap, val cle: IntArray, val sortie: Array<FloatArray>)
+  @Volatile private var dernierMemo: Memo? = null
+
   fun detecte(img: Bitmap, coinsPx: Array<DoubleArray>): Resultat? {
-    val versPlateau = Coins.homographie(coinsPx, Coins.SQ) ?: return null
+    Coins.homographie(coinsPx, Coins.SQ) ?: return null
 
     // On ne garde que la zone autour de l'échiquier (+ de la marge en haut pour les pièces hautes)
     val xs = coinsPx.map { it[0] }
@@ -57,30 +72,45 @@ class Detecteur(modele: ByteArray) {
     if (cw < 32 || ch < 32) return null
     val zone = Bitmap.createBitmap(img, cx0, cy0, cw, ch)
 
-    // Image 640x640 (comme à l'entraînement), fond gris
+    // même image et même zone (ex. : les 4 orientations du plateau) : le détecteur donne le même résultat, je le réutilise
+    val cle = intArrayOf(cx0, cy0, cw, ch)
     val s = 640.0 / max(cw, ch)
-    val rw = max(1, (cw * s).toInt())
-    val rh = max(1, (ch * s).toInt())
-    val petit = Bitmap.createScaledBitmap(zone, rw, rh, true)
-    val px = IntArray(rw * rh)
-    petit.getPixels(px, 0, rw, 0, 0, rw, rh)
-    val plan = 640 * 640
-    val data = FloatArray(3 * plan) { 114f / 255f }
-    for (y in 0 until rh) {
-      for (x in 0 until rw) {
-        val c = px[y * rw + x]
-        val i = y * 640 + x
-        data[i] = ((c shr 16) and 255) / 255f
-        data[plan + i] = ((c shr 8) and 255) / 255f
-        data[2 * plan + i] = (c and 255) / 255f
-      }
-    }
+    val memo = dernierMemo
     val sortie: Array<FloatArray> =
-        OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, 640, 640)).use { t ->
-          session.run(mapOf(nomEntree to t)).use { r ->
-            @Suppress("UNCHECKED_CAST")
-            (r[0].value as Array<Array<FloatArray>>)[0]
+        if (memo != null && memo.img === img && memo.cle.contentEquals(cle)) memo.sortie
+        else {
+        // Image 640x640 (comme à l'entraînement), fond gris
+        val tA = System.nanoTime()
+        val rw = max(1, (cw * s).toInt())
+        val rh = max(1, (ch * s).toInt())
+        val petit = Bitmap.createScaledBitmap(zone, rw, rh, true)
+        val px = IntArray(rw * rh)
+        petit.getPixels(px, 0, rw, 0, 0, rw, rh)
+        val plan = 640 * 640
+        val data = FloatArray(3 * plan) { 114f / 255f }
+        for (y in 0 until rh) {
+          for (x in 0 until rw) {
+            val c = px[y * rw + x]
+            val i = y * 640 + x
+            data[i] = ((c shr 16) and 255) / 255f
+            data[plan + i] = ((c shr 8) and 255) / 255f
+            data[2 * plan + i] = (c and 255) / 255f
           }
+        }
+        val tB = System.nanoTime()
+        val calc: Array<FloatArray> =
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, 640, 640)).use { t ->
+              session.run(mapOf(nomEntree to t)).use { r ->
+                @Suppress("UNCHECKED_CAST")
+                (r[0].value as Array<Array<FloatArray>>)[0]
+              }
+            }
+    
+    
+        tpsPrep = (tB - tA) / 1000000L
+        tpsOrt = (System.nanoTime() - tB) / 1000000L
+        dernierMemo = Memo(img, cle, calc)
+        calc
         }
 
     val nc = sortie.size - 4
@@ -88,8 +118,14 @@ class Detecteur(modele: ByteArray) {
     val boites = ArrayList<Boite>()
     for (i in 0 until n) {
       var m = 0f
-      for (c in 0 until nc) m = max(m, sortie[4 + c][i])
-      if (m > 0.25f) boites.add(Boite(sortie[0][i], sortie[1][i], sortie[2][i], sortie[3][i], m))
+      var mc = 0
+      for (c in 0 until nc) {
+        if (sortie[4 + c][i] > m) {
+          m = sortie[4 + c][i]
+          mc = c
+        }
+      }
+      if (m > 0.25f) boites.add(Boite(sortie[0][i], sortie[1][i], sortie[2][i], sortie[3][i], m, mc))
     }
     boites.sortByDescending { it.conf }
     val finales = ArrayList<Boite>()
@@ -98,17 +134,12 @@ class Detecteur(modele: ByteArray) {
     // Luminosité de chaque pièce (pour savoir si elle est blanche ou noire)
     val zpx = IntArray(cw * ch)
     zone.getPixels(zpx, 0, cw, 0, 0, cw, ch)
-    class Det(val idx: Int, val lum: Double)
-    val dets = ArrayList<Det>()
+    val pts = ArrayList<Pt>()
     for (b in finales) {
       val cx = b.cx / s
       val cy = b.cy / s
       val w = b.w / s
       val h = b.h / s
-      val uv = Coins.applique(versPlateau, cx + cx0, cy + cy0 + BASE * h)
-      if (uv[0] < -0.5 || uv[0] > 8.5 || uv[1] < -0.5 || uv[1] > 8.5) continue
-      val col = floor(uv[0]).toInt().coerceIn(0, 7)
-      val row = floor(uv[1]).toInt().coerceIn(0, 7)
       val y1 = max(0, (cy - h * 0.2).toInt())
       val y2 = min(ch, max(y1 + 1, (cy + h * 0.2).toInt() + 1))
       val x1 = max(0, (cx - w * 0.2).toInt())
@@ -119,24 +150,106 @@ class Detecteur(modele: ByteArray) {
         tot += lum(zpx[yy * cw + xx])
         k++
       }
-      if (k > 0) dets.add(Det(row * 8 + col, tot / k))
+      if (k > 0) pts.add(Pt(cx + cx0, cy + cy0 + BASE * h, tot / k, b.cls, b.conf.toDouble()))
     }
-    val obs = IntArray(64)
-    if (dets.isEmpty()) return Resultat(obs, finales.size)
-    val lums = dets.map { it.lum }.sorted()
-    val seuil =
-        if (lums.size % 2 == 1) lums[lums.size / 2]
-        else (lums[lums.size / 2 - 1] + lums[lums.size / 2]) / 2
-    for (d in dets) if (obs[d.idx] == 0) obs[d.idx] = if (d.lum > seuil) 1 else 2
-    return Resultat(obs, finales.size)
+    val obs = observer(pts, coinsPx) ?: IntArray(64)
+    return Resultat(obs, finales.size, pts)
   }
 
   companion object {
+    /** Occupation des 64 cases (0 vide, 1 blanc, 2 noir) à partir des pieds de pièces et des 4 coins. */
+    fun observer(pts: List<Pt>, coinsPx: Array<DoubleArray>): IntArray? {
+      if (Coins.homographie(coinsPx, Coins.SQ) == null) return null
+      return Lecteur.occupation(
+          coinsPx,
+          DoubleArray(pts.size) { pts[it].x },
+          DoubleArray(pts.size) { pts[it].y },
+          DoubleArray(pts.size) { pts[it].lum },
+      )
+    }
+
+    /** Lecture "souple" : chaque pièce est rattachée à la case attendue la plus proche. */
+    fun vue(pts: List<Pt>, coinsPx: Array<DoubleArray>): Lecteur.Vue =
+        Lecteur.vue(
+            coinsPx,
+            DoubleArray(pts.size) { pts[it].x },
+            DoubleArray(pts.size) { pts[it].y },
+            DoubleArray(pts.size) { pts[it].lum },
+            IntArray(pts.size) { pts[it].cls },
+            DoubleArray(pts.size) { pts[it].conf },
+        )
+
+    /** Position complète lue (lettres FEN, majuscule = blanc), vue depuis la caméra. */
+    fun lire(pts: List<Pt>, coinsPx: Array<DoubleArray>): CharArray =
+        Lecteur.lire(
+            coinsPx,
+            DoubleArray(pts.size) { pts[it].x },
+            DoubleArray(pts.size) { pts[it].y },
+            DoubleArray(pts.size) { pts[it].lum },
+            IntArray(pts.size) { pts[it].cls },
+            DoubleArray(pts.size) { pts[it].conf },
+        )
+
+    /**
+     * Recale les 4 coins pour que les pièces vues collent au mieux avec la position attendue
+     * (la position actuelle ou celle après l'un des coups légaux).
+     */
+    fun raffine(pts: List<Pt>, coins: Array<DoubleArray>, candidats: List<IntArray>): Array<DoubleArray> {
+      fun cout(c: Array<DoubleArray>): Int {
+        val o = observer(pts, c) ?: return 999
+        var m = 999
+        for (a in candidats) {
+          var n = 0
+          for (i in 0 until 64) if (o[i] != a[i]) n++
+          if (n < m) m = n
+        }
+        return m
+      }
+      var best = Array(4) { coins[it].clone() }
+      var bc = cout(best)
+      val bw = coins.maxOf { it[0] } - coins.minOf { it[0] }
+      val bh = coins.maxOf { it[1] } - coins.minOf { it[1] }
+      // le quadrillage est déjà précis : on ne laisse pas le recalage s'éloigner de plus de ~0,4 case
+      val maxDx = 0.05 * bw
+      val maxDy = 0.05 * bh
+      for (pas in doubleArrayOf(0.04, 0.02, 0.01, 0.005)) {
+        var mieux = true
+        var tours = 0
+        while (mieux && tours < 6 && bc > 0) {
+          mieux = false
+          tours++
+          for (k in 0..3) for (axe in 0..1) for (sg in intArrayOf(-1, 1)) {
+            val t = Array(4) { best[it].clone() }
+            t[k][axe] += sg * pas * (if (axe == 0) bw else bh)
+            if (Math.abs(t[k][axe] - coins[k][axe]) > (if (axe == 0) maxDx else maxDy)) continue
+            val c = cout(t)
+            if (c < bc) {
+              best = t
+              bc = c
+              mieux = true
+            }
+          }
+        }
+      }
+      return best
+    }
+
     /** Où se trouve le "pied" de la pièce dans sa boîte (0 = centre, 0.5 = bas). */
     const val BASE = 0.40
 
     fun lum(c: Int): Double =
         ((c shr 16) and 255) * 0.299 + ((c shr 8) and 255) * 0.587 + (c and 255) * 0.114
+
+    /** Image en gris réduite à 1000 pixels de large au plus, pour le repérage du quadrillage. */
+    fun gris1000(img: Bitmap): Coins.Gris {
+      val w = min(1000, img.width)
+      val h = max(1, (img.height * w.toDouble() / img.width).toInt())
+      val b = Bitmap.createScaledBitmap(img, w, h, true)
+      val px = IntArray(w * h)
+      b.getPixels(px, 0, w, 0, 0, w, h)
+      val g = FloatArray(w * h) { lum(px[it]).toFloat() }
+      return Coins.Gris(w, h, g)
+    }
 
     /** Image en gris réduite à 500 pixels de large, pour la recherche de l'échiquier. */
     fun gris500(img: Bitmap): Coins.Gris {

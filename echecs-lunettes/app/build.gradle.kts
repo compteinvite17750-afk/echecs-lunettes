@@ -14,11 +14,13 @@ android {
     applicationId = "fr.echecs.lunettes"
     minSdk = 29
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    val vNum = (project.findProperty("vNum") ?: "0").toString()
+    versionCode = vNum.toIntOrNull() ?: 1
+    versionName = vNum
     ndk { abiFilters += "arm64-v8a" }
 
-    // Mode développeur Meta : pas besoin d'identifiants
+    // Mode développeur Meta (activé dans l'appli Meta AI) : pas besoin d'identifiants.
+    // Identifiants enregistrés chez Meta, si besoin plus tard : 1082721304535859 / AR|1082721304535859|778fc4b09a65289f881f65ce833bf3df
     manifestPlaceholders["mwdat_application_id"] = "0"
     manifestPlaceholders["mwdat_client_token"] = "0"
   }

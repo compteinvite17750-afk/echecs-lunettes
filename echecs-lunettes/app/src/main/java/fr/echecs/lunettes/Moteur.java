@@ -51,7 +51,8 @@ public final class Moteur {
             int i = t.indexOf(':');
             if (i < 4 || i > 5) continue;
             String m = t.substring(0, i);
-            if (m.matches("[a-h][1-8][a-h][1-8][qrbn]?")) r.add(m);
+            // promotion : on suppose toujours une dame (comme tout le monde, et une dame de remplacement est souvent une autre pièce)
+            if (m.matches("[a-h][1-8][a-h][1-8][qrbn]?") && (m.length() < 5 || m.charAt(4) == 'q')) r.add(m);
         }
         return r;
     }
