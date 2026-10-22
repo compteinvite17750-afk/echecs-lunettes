@@ -110,7 +110,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val h = java.text.SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(java.util.Date())
       synchronized(journal) {
         journal.add("$h $s")
-        while (journal.size > 3000) journal.removeAt(0)
+        while (journal.size > 12000) journal.removeAt(0)
       }
       val now = SystemClock.elapsedRealtime()
       if (now - dernierJournal > 4000) {
@@ -611,15 +611,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         var dernierBattement = -2000L
         while (true) {
           val t = SystemClock.elapsedRealtime() - debut
-          if (t >= dureeMs && (nbImages <= 0 || t >= 3L * dureeMs)) break
+          if (t >= dureeMs) break
           if (t - dernierBattement >= 2000L) {
             dernierBattement = t
             noter("VIDEO : battement t=${t / 1000} s image=$idx analyse=${analyseOcc.get()}")
           }
           val cible = (t * cadence / 1000.0).toInt()
           if (nbImages > 0 && idx >= nbImages) break
-          // en retard : on ne saute plus d'images (le suivi a besoin de toutes les images ; la vidéo passe un peu moins vite que la réalité)
-          if (nbImages <= 0 && idx < cible - 10) idx = cible
+          if (idx < cible - 10) idx = cible // en retard : on saute des images (comme une caméra en direct), la vidéo dure toujours 1 minute
           if (idx > cible + 1) {
             kotlinx.coroutines.delay(10)
             continue
@@ -690,6 +689,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         while (analyseOcc.get() && att++ < 100) kotlinx.coroutines.delay(100)
         noter("VIDEO : fin, $nbPetites images suivies sur ${nbImages} (cadence ${Math.round(cadence)}/s)")
         statut("Vidéo terminée.")
+        ecrireJournal()
       } catch (e: Throwable) {
         noter("VIDEO : ERREUR $e")
         statut("ERREUR vidéo : ${e.message}")
