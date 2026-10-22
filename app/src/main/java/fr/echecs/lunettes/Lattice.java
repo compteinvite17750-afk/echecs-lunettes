@@ -320,17 +320,21 @@ public final class Lattice {
         for (int i = 0; i < 80; i++)
             for (int j = 0; j < 80; j++) C[i + 1][j + 1] = G[i][j] + C[i][j + 1] + C[i + 1][j] - C[i][j];
         List<int[]> L = new ArrayList<>();
+        int best = Integer.MIN_VALUE;
         for (int oi = -12; oi < 12; oi++) {
             for (int oj = -12; oj < 12; oj++) {
                 int i0 = oi + 40, j0 = oj + 40;
                 int ins = C[i0 + 9][j0 + 9] - C[i0][j0 + 9] - C[i0 + 9][j0] + C[i0][j0];
-                L.add(new int[]{ins - (n - ins), oi, oj, ins, n - ins});
+                int v = ins - (n - ins);
+                if (v > best) best = v;
+                if (v >= best - 10) L.add(new int[]{v, oi, oj, ins, n - ins});
             }
         }
-        L.sort((x, y) -> y[0] != x[0] ? y[0] - x[0] : (x[1] != y[1] ? y[1] - x[1] : y[2] - x[2]));
-        int best = L.get(0)[0];
+        List<int[]> keep = new ArrayList<>();
+        for (int[] w : L) if (w[0] >= best - 10) keep.add(w);
+        keep.sort((x, y) -> y[0] != x[0] ? y[0] - x[0] : (x[1] != y[1] ? y[1] - x[1] : y[2] - x[2]));
         List<int[]> out = new ArrayList<>();
-        for (int[] w : L) if (w[0] >= best - 10 && out.size() < 12) out.add(w);
+        for (int[] w : keep) if (out.size() < 12) out.add(w);
         return out;
     }
 
@@ -412,7 +416,33 @@ public final class Lattice {
     }
 
     public static Res trouve(Coins.Gris g, List<double[]> pieds, double[][] avant) {
-        double sig = Math.max(1.2, 2.0 * g.w / 1000.0);
+        return trouve(g, pieds, avant, Math.max(1.2, 2.0 * g.w / 1000.0));
+    }
+
+    /**
+     * Même recherche, mais seulement dans le rectangle (x0, y0, rw, rh) de l'image : beaucoup plus rapide quand on sait
+     * à peu près où est le plateau. Les coordonnées (pieds, avant, résultat) restent celles de l'image entière.
+     */
+    public static Res trouveRoi(Coins.Gris g, List<double[]> pieds, double[][] avant, int x0, int y0, int rw, int rh) {
+        if (rw < 64 || rh < 64 || x0 < 0 || y0 < 0 || x0 + rw > g.w || y0 + rh > g.h) return null;
+        float[] p = new float[rw * rh];
+        for (int y = 0; y < rh; y++) System.arraycopy(g.p, (y0 + y) * g.w + x0, p, y * rw, rw);
+        Coins.Gris sub = new Coins.Gris(rw, rh, p);
+        List<double[]> pd = new ArrayList<>();
+        if (pieds != null) for (double[] q : pieds) pd.add(new double[] {q[0] - x0, q[1] - y0});
+        double[][] av = null;
+        if (avant != null) {
+            av = new double[avant.length][];
+            for (int i = 0; i < avant.length; i++) av[i] = new double[] {avant[i][0] - x0, avant[i][1] - y0};
+        }
+        Res r = trouve(sub, pd, av, Math.max(1.2, 2.0 * g.w / 1000.0));
+        if (r == null) return null;
+        double[][] px = new double[r.px.length][];
+        for (int i = 0; i < px.length; i++) px[i] = new double[] {r.px[i][0] + x0, r.px[i][1] + y0};
+        return new Res(px, r.v);
+    }
+
+    private static Res trouve(Coins.Gris g, List<double[]> pieds, double[][] avant, double sig) {
         double[][] P = selles(g, sig);
         int n = P.length;
         if (n < 12) return null;
@@ -420,12 +450,18 @@ public final class Lattice {
         int[][] nn = new int[n][kk];
         for (int p = 0; p < n; p++) {
             final int pp = p;
-            Integer[] ord = new Integer[n];
-            for (int i = 0; i < n; i++) ord[i] = i;
-            final double[] pd = new double[n];
-            for (int i = 0; i < n; i++) pd[i] = Math.hypot(P[i][0] - P[pp][0], P[i][1] - P[pp][1]);
-            Arrays.sort(ord, (a, b) -> Double.compare(pd[a], pd[b]));
-            for (int i = 0; i < kk; i++) nn[p][i] = ord[i];
+            final double[] dk = new double[kk];
+            final int[] ik = new int[kk];
+            int m = 0;
+            for (int i = 0; i < n; i++) {
+                double dx = P[i][0] - P[pp][0], dy = P[i][1] - P[pp][1];
+                double d = dx * dx + dy * dy;
+                if (m == kk && d >= dk[kk - 1]) continue;
+                int pos = m < kk ? m++ : kk - 1;
+                while (pos > 0 && dk[pos - 1] > d) { dk[pos] = dk[pos - 1]; ik[pos] = ik[pos - 1]; pos--; }
+                dk[pos] = d; ik[pos] = i;
+            }
+            for (int i = 0; i < kk; i++) nn[p][i] = ik[i];
         }
         List<int[]> hyp = new ArrayList<>();
         for (int p = 0; p < n; p++) {

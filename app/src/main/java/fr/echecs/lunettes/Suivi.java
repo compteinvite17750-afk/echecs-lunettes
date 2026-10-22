@@ -43,6 +43,10 @@ public final class Suivi {
     return actif && echecs <= 2;
   }
 
+  public synchronized String diag() {
+    return "actif=" + actif + " echecs=" + echecs + " quad=" + (quadPx != null) + " id=" + id;
+  }
+
   public synchronized boolean actif() {
     return actif;
   }
