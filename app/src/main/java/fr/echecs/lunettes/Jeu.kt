@@ -1126,6 +1126,14 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       plateauVu = true
       return sur
     }
+    // le suivi image par image tient le plateau et le quadrillage a été retrouvé il y a peu : je saute la recherche
+    // du quadrillage (la partie la plus lente de l'analyse), je la refais seulement toutes les ~2,5 s pour recaler
+    if (!doute && qs != null && contredit == 0 && partieActive && maintenant - dernierAncrage < 2500L) {
+      plateauSur = qs
+      plateauSurA = maintenant
+      plateauVu = true
+      return qs
+    }
     try {
       val g = Detecteur.gris1000(img)
       val toute = arrayOf(
