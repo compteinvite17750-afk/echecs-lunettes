@@ -104,6 +104,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   // journal de ce que fait l'appli (Téléchargements/echecs-photos/echecs-journal.txt) : sert à comprendre les erreurs
   private val journal = ArrayList<String>()
   private var dernierJournal = 0L
+  @Volatile private var journalUri: Uri? = null // le même fichier pendant toute la durée de l'appli (sinon Android en crée un nouveau à chaque écriture)
 
   private fun noter(s: String) {
     try {
@@ -126,22 +127,31 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       val res = getApplication<Application>().contentResolver
       val nom = "echecs-journal.txt"
       val col = MediaStore.Downloads.EXTERNAL_CONTENT_URI
-      var trouve: Uri? = null
-      res.query(
-              col,
-              arrayOf(MediaStore.MediaColumns._ID),
-              MediaStore.MediaColumns.DISPLAY_NAME + " = ? AND " + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?",
-              arrayOf(nom, "Download/echecs-photos%"),
-              null,
-          )
-          ?.use { c -> if (c.moveToFirst()) trouve = ContentUris.withAppendedId(col, c.getLong(0)) }
-      var uri: Uri? = trouve
+      var uri: Uri? = journalUri
       if (uri == null) {
+        // au premier enregistrement après le lancement de l'appli : je supprime mes anciens fichiers journal (ceux que cette installation a le droit de toucher)
+        // puis j'en crée un seul, qui sera réécrit entièrement à chaque fois
+        val anciens = ArrayList<Uri>()
+        res.query(
+                col,
+                arrayOf(MediaStore.MediaColumns._ID),
+                MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ? AND " + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?",
+                arrayOf("echecs-journal%", "Download/echecs-photos%"),
+                null,
+            )
+            ?.use { c -> while (c.moveToNext()) anciens.add(ContentUris.withAppendedId(col, c.getLong(0))) }
+        for (x in anciens) {
+          try {
+            res.delete(x, null, null)
+          } catch (e: Exception) {
+          }
+        }
         val cv = ContentValues()
         cv.put(MediaStore.MediaColumns.DISPLAY_NAME, nom)
         cv.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
         cv.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
         uri = res.insert(col, cv)
+        journalUri = uri
       }
       val u = uri ?: return
       val texte = synchronized(journal) { journal.joinToString("\n") }
