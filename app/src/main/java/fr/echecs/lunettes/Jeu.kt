@@ -477,6 +477,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       statut("Partie terminée.")
       partieActive = false
       autoReprise = false
+      estimerNiveau()
       return true
     }
     val coup = m.meilleurCoup(pos, TEMPS_MOTEUR) ?: return true
@@ -503,6 +504,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     if (fini) {
       partieActive = false
       autoReprise = false
+      estimerNiveau()
     }
     val suite =
         when {
@@ -515,6 +517,56 @@ class Jeu(app: Application) : AndroidViewModel(app) {
     statut("TON COUP : $phrase.$suite")
     majPartie()
     return true
+  }
+
+
+  // ---------------- niveau estimé de l'adversaire (seulement à la fin d'une partie) ----------------
+  /** Compare chaque coup de l'adversaire au meilleur coup de Stockfish et en déduit un Elo approximatif. Ne touche à rien d'autre. */
+  private fun estimerNiveau() {
+    val m = moteur ?: return
+    if (lectureVideo) return
+    val liste = ArrayList<String>(coups)
+    val base = baseFen
+    val moiCamp = moi
+    viewModelScope.launch(Dispatchers.Default) {
+      try {
+        // je laisse finir l'annonce de fin de partie
+        var att = 0
+        while (tts?.isSpeaking == true && att++ < 100) kotlinx.coroutines.delay(200)
+        kotlinx.coroutines.delay(1500)
+        fun pos(n: Int): String {
+          val b = base?.let { "position fen $it" } ?: "position startpos"
+          return if (n == 0) b else "$b moves " + liste.subList(0, n).joinToString(" ")
+        }
+        val pertes = ArrayList<Int>()
+        var coupsAdv = 0
+        for (i in liste.indices) {
+          val trait = m.etat(pos(i))[0].split(" ")[1][0]
+          if (trait == moiCamp) continue // c'est un coup à moi
+          coupsAdv++
+          if (coupsAdv <= 5) continue // les premiers coups sont souvent appris par cœur : ça ne dit rien du niveau
+          val avant = m.evaluation(pos(i), 150) // du point de vue de celui qui joue
+          val apres = -m.evaluation(pos(i + 1), 150) // idem, après le coup réellement joué
+          pertes.add(Math.min(300, Math.max(0, avant - apres)))
+        }
+        if (pertes.size < 5) {
+          noter("NIVEAU : partie trop courte pour estimer (${pertes.size} coups analysés)")
+          return@launch
+        }
+        val acpl = pertes.sum().toDouble() / pertes.size
+        fun elo(x: Double): Int = (Math.round(3100.0 * Math.exp(-0.0105 * x) / 50.0) * 50L).toInt().coerceIn(400, 3000)
+        val f = 1.0 + 1.5 / Math.sqrt(pertes.size.toDouble())
+        val milieu = elo(acpl)
+        val bas = elo(acpl * f)
+        val haut = elo(acpl / f)
+        val grosses = pertes.count { it >= 200 }
+        noter("NIVEAU : ${pertes.size} coups analysés, perte moyenne ${"%.0f".format(acpl)} centipions, $grosses grosse(s) erreur(s) -> ~$milieu ($bas à $haut)")
+        parle("Niveau estimé de l'adversaire : environ $milieu Elo, entre $bas et $haut.")
+        statut("Niveau estimé de l'adversaire : environ $milieu Elo (entre $bas et $haut), d'après ${pertes.size} coups.")
+      } catch (e: Exception) {
+        noter("NIVEAU : erreur $e")
+      }
+    }
   }
 
   private fun partieEnCours(): Boolean {

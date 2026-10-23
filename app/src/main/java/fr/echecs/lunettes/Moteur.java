@@ -85,6 +85,28 @@ public final class Moteur {
         return t[1];
     }
 
+    /**
+     * Évaluation (en centipions, du point de vue du camp qui a le trait) d'une position, après une courte réflexion.
+     * Un mat est compté +-1000 ; un camp déjà maté vaut -1000. Sert seulement à estimer le niveau en fin de partie.
+     */
+    public synchronized int evaluation(String position, int ms) throws IOException {
+        envoie(position);
+        envoie("go movetime " + ms);
+        int score = 0;
+        for (String l : lisJusqua("bestmove")) {
+            int i = l.indexOf(" score ");
+            if (i < 0 || l.contains("lowerbound") || l.contains("upperbound")) continue;
+            String[] t = l.substring(i + 7).trim().split("\\s+");
+            if (t.length < 2) continue;
+            try {
+                int v = Integer.parseInt(t[1]);
+                if (t[0].equals("cp")) score = v;
+                else if (t[0].equals("mate")) score = v > 0 ? 1000 : (v < 0 ? -1000 : -1000);
+            } catch (NumberFormatException ignored) { }
+        }
+        return Math.max(-1000, Math.min(1000, score));
+    }
+
     public void ferme() {
         try { envoie("quit"); } catch (IOException ignored) { }
         proc.destroy();
