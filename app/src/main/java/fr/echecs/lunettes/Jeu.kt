@@ -104,6 +104,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   // journal de ce que fait l'appli (Téléchargements/echecs-photos/echecs-journal.txt) : sert à comprendre les erreurs
   private val journal = ArrayList<String>()
   private var dernierJournal = 0L
+  private val nomJournal = "echecs-journal-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", Locale.FRANCE).format(java.util.Date()) + ".txt"
   @Volatile private var journalUri: Uri? = null // le même fichier pendant toute la durée de l'appli (sinon Android en crée un nouveau à chaque écriture)
 
   private fun noter(s: String) {
@@ -125,29 +126,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   private fun ecrireJournal() {
     try {
       val res = getApplication<Application>().contentResolver
-      val nom = "echecs-journal.txt"
       val col = MediaStore.Downloads.EXTERNAL_CONTENT_URI
       var uri: Uri? = journalUri
       if (uri == null) {
-        // au premier enregistrement après le lancement de l'appli : je supprime mes anciens fichiers journal (ceux que cette installation a le droit de toucher)
-        // puis j'en crée un seul, qui sera réécrit entièrement à chaque fois
-        val anciens = ArrayList<Uri>()
-        res.query(
-                col,
-                arrayOf(MediaStore.MediaColumns._ID),
-                MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ? AND " + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?",
-                arrayOf("echecs-journal%", "Download/echecs-photos%"),
-                null,
-            )
-            ?.use { c -> while (c.moveToNext()) anciens.add(ContentUris.withAppendedId(col, c.getLong(0))) }
-        for (x in anciens) {
-          try {
-            res.delete(x, null, null)
-          } catch (e: Exception) {
-          }
-        }
+        // un seul fichier par lancement de l'appli, au nom unique (l'ancien journal n'est jamais effacé ni mélangé) ; il est réécrit entièrement à chaque fois
         val cv = ContentValues()
-        cv.put(MediaStore.MediaColumns.DISPLAY_NAME, nom)
+        cv.put(MediaStore.MediaColumns.DISPLAY_NAME, nomJournal)
         cv.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
         cv.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
         uri = res.insert(col, cv)
@@ -981,6 +965,12 @@ class Jeu(app: Application) : AndroidViewModel(app) {
         // ou bien on reconnaît déjà le coup de l'adversaire (donc il a forcément joué le sien)
         // (une lecture "plausible" ne suffit pas : sinon on pourrait annoncer un 2e coup avant que tu aies joué)
         if (av != null && actuel < Partie.ecart(r.obs, av)) attendMonCoup = false
+      }
+      // le coup de l'adversaire « colle » à peine (2 cases ou plus qui ne vont pas) : peut-être que TU n'as pas joué le coup que je t'avais conseillé
+      // (par exemple le même cavalier, mais en prenant une pièce) ; je regarde si un autre coup de toi + sa réponse explique bien mieux la photo
+      if (!lectureVideo && plausible && meilleur.ecart - extras >= 2 && resynchroniser(choix.vue, meilleur.ecart, extras)) {
+        noter("RESYNCHRO avant acceptation : ecart=${meilleur.ecart} extras=$extras coups=${coups.takeLast(3)}")
+        return
       }
       if (!plausible) {
         // en vidéo, un coup en attente survit à une mauvaise image (main devant) pendant 10 s
