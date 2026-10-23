@@ -176,14 +176,9 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       cvImg.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
       val uriImg = res.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cvImg) ?: return
       res.openOutputStream(uriImg)?.use { img.compress(Bitmap.CompressFormat.JPEG, 88, it) }
-      val cvTxt = ContentValues()
-      cvTxt.put(MediaStore.MediaColumns.DISPLAY_NAME, "$nom.txt")
-      cvTxt.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-      cvTxt.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/echecs-photos")
-      val uriTxt = res.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cvTxt) ?: return
+      // plus de petit fichier .txt à côté de chaque photo : tout est dans le journal unique (une ligne PHOTO par image)
       val pts = coins.joinToString(" ") { "" + Math.round(it[0]) + "," + Math.round(it[1]) }
-      val texte = fen + "\n" + moi + "\n" + pts + "\n"
-      res.openOutputStream(uriTxt)?.use { it.write(texte.toByteArray()) }
+      noter("PHOTO $nom.jpg : $fen $moi $pts")
       nbEnreg++
     } catch (e: Exception) {
       Log.w("Jeu", "enregistrement impossible : " + e.message)
@@ -238,6 +233,7 @@ class Jeu(app: Application) : AndroidViewModel(app) {
   // analyse
   private val occupe = AtomicBoolean(false)
   private var coupEnAttente: String? = null
+  private var confirmeCoup = 0
   private var incertain = 0
   private var attendMonCoup = false
   private var occAvant: IntArray? = null
@@ -1095,9 +1091,21 @@ class Jeu(app: Application) : AndroidViewModel(app) {
       if ((!fort || recent) && coupEnAttente != meilleur.coup) {
         coupEnAttente = meilleur.coup
         coupEnAttenteA = SystemClock.elapsedRealtime()
+        confirmeCoup = 0
         statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
         verifDemandeeA = SystemClock.elapsedRealtime() + 800
         return
+      }
+      if (!fort && !lectureVideo) {
+        // coup peu net : la main de l'adversaire est peut-être encore sur la pièce -> je laisse passer du temps et des lectures concordantes
+        val delaiConf = SystemClock.elapsedRealtime() - coupEnAttenteA
+        val voulu = if (actuel - extras >= 3) 3 else 2
+        confirmeCoup++
+        if (confirmeCoup < voulu || delaiConf < 2000L) {
+          verifDemandeeA = SystemClock.elapsedRealtime() + 700
+          statut("Coup probable : ${Partie.decrire(b, meilleur.coup)}. Je vérifie…")
+          return
+        }
       }
       coupEnAttente = null
       val phrase = Partie.decrire(b, meilleur.coup)
